@@ -1,4 +1,4 @@
-# YT-DL Firefox
+# VidGrab
 
 A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a local [yt-dlp](https://github.com/yt-dlp/yt-dlp) backend. Version 2.0.0.
 
@@ -12,6 +12,8 @@ A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels t
 - Keeps yt-dlp up to date and starts the backend automatically when Firefox needs it.
 
 Files are saved to your Downloads folder as `Title [id].ext`. Playlist and channel items go into `Downloads\<playlist title>\` or `Downloads\<channel name>\`.
+
+With ffmpeg installed, every file gets embedded tags: title, channel (as artist), upload date, description and the video URL. Video files also get a stream summary such as `1920x1080, 30 fps, avc1.640028` in the comment tag, which Explorer shows under Properties > Details.
 
 ## Requirements
 

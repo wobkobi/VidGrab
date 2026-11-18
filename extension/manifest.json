@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
-  "name": "YT-DL Firefox",
-  "version": "2.0.0",
+  "name": "VidGrab",
+  "version": "2.0.1",
   "description": "Download YouTube videos, Shorts, playlists and channels as video or MP3 through a local yt-dlp backend.",
   "browser_specific_settings": {
     "gecko": {
@@ -45,7 +45,7 @@
     }
   ],
   "browser_action": {
-    "default_title": "YT-DL downloads",
+    "default_title": "VidGrab downloads",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/toolbar.svg",

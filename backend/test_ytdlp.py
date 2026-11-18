@@ -113,6 +113,27 @@ def test_without_ffmpeg_requests_single_file_formats() -> None:
     assert "-x" not in m4a
 
 
+def test_metadata_embedded_with_ffmpeg() -> None:
+    video = build_args(JobOptions(), URL, OUT, cookies=False)
+    assert "--embed-metadata" in video
+    summary = value_after(video, "--parse-metadata")
+    # before_dl runs after format selection, so the chosen stream's fields are filled in
+    assert summary.startswith("before_dl:")
+    assert summary.endswith(":(?P<meta_comment>.+)")
+    assert ":" not in summary.removeprefix("before_dl:").removesuffix(":(?P<meta_comment>.+)")
+
+    audio = build_args(JobOptions(kind="audio"), URL, OUT, cookies=False)
+    assert "--embed-metadata" in audio
+    assert "--parse-metadata" not in audio
+
+
+def test_no_metadata_without_ffmpeg() -> None:
+    for options in (JobOptions(quality="720"), JobOptions(kind="audio", audio_format="m4a")):
+        args = build_args(options, URL, OUT, cookies=False, ffmpeg=False)
+        assert "--embed-metadata" not in args
+        assert "--parse-metadata" not in args
+
+
 def test_url_is_last_after_separator() -> None:
     args = build_args(JobOptions(), "-o/evil", OUT, cookies=False)
     assert args[-2:] == ["--", "-o/evil"]

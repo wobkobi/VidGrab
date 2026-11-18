@@ -19,6 +19,8 @@ FILE_PREFIX = "YTDLP_FILE "
 TITLE_PREFIX = "YTDLP_TITLE "
 
 OUTPUT_TEMPLATE = "%(title)s [%(id)s].%(ext)s"
+# Written to the comment tag of video files; "|" fallbacks keep it readable when a field is missing
+VIDEO_SUMMARY_TEMPLATE = "%(width|?)sx%(height|?)s, %(fps|?)s fps, %(vcodec|unknown)s"
 
 # Fallback for plain "[download]  45.2% of 12.34MiB at 1.23MiB/s ETA 00:30" lines
 PROGRESS_REGEX = re.compile(r"^\[download\]\s+(\d+(?:\.\d+)?)%")
@@ -85,6 +87,8 @@ def build_args(
     Video sorts by resolution first (capped at the chosen quality) and then by codec, so a codec
     preference never lowers the resolution. MP4 also prefers AAC audio, so the merge is a plain
     remux. Without ffmpeg only single-file formats are requested, since nothing could merge them.
+    With ffmpeg every file also gets embedded tags (title, channel, date, description, URL), and
+    videos get a "1920x1080, 30 fps, avc1" summary in the comment tag.
 
     Args:
         options: The validated download options.
@@ -140,6 +144,15 @@ def build_args(
         else:
             args += ["-f", "b"]
         args += ["-S", ",".join(sort)]
+        if ffmpeg:
+            # Readable stream summary in the comment tag, which Explorer's Details tab shows.
+            # before_dl runs after format selection, so width/height/fps/vcodec are known; the
+            # template must not contain ":" because yt-dlp splits WHEN:FROM:TO on it
+            args += ["--parse-metadata", f"before_dl:{VIDEO_SUMMARY_TEMPLATE}:(?P<meta_comment>.+)"]
+
+    if ffmpeg:
+        # Title, channel (as artist), upload date, description and the video URL
+        args += ["--embed-metadata"]
 
     args += ["--", url]
     return args
