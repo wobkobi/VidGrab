@@ -22,10 +22,13 @@ env/
 .coverage.*
 htmlcov/
 
-# Environment variables (keep the example template)
+# Backend runtime state (settings, update state, server log) and the generated native host files
+backend/data/
+native-messaging-host/*.json
+
+# Environment variables
 .env
 .env.*
-!.env.example
 
 # Firefox extension packaging (web-ext build/sign output)
 web-ext-artifacts/
@@ -55,8 +58,6 @@ npm-debug.log*
 *.swp
 *.swo
 
-# Project docs (kept local)
-docs/
 
 # OS
 .DS_Store

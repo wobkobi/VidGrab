@@ -1,0 +1,287 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f4f4f5;
+  --border: #e2e2e5;
+  --text: #18181b;
+  --muted: #6b6b73;
+  --accent: #d92b2b;
+  --accent-text: #ffffff;
+  --ok: #1f9d55;
+  --warn: #c27c0e;
+  --bad: #d92b2b;
+  --track: #e4e4e7;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1b22;
+    --surface: #2b2a33;
+    --border: #3a3944;
+    --text: #fbfbfe;
+    --muted: #a8a7b0;
+    --accent: #ff5a5a;
+    --accent-text: #1c1b22;
+    --ok: #4fd18b;
+    --warn: #f0b34a;
+    --bad: #ff6b6b;
+    --track: #42414d;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 380px;
+  max-height: 560px;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 11.5px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-text > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+
+.dot.bad {
+  background: var(--bad);
+}
+
+.btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn.icon {
+  padding: 2px 7px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.message {
+  margin: 8px 12px 0;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--surface);
+  border-left: 3px solid var(--bad);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.message.info {
+  border-left-color: var(--ok);
+}
+
+.jobs {
+  overflow-y: auto;
+  padding: 4px 12px;
+  flex: 1;
+}
+
+.jobs:empty {
+  display: none;
+}
+
+.empty {
+  margin: 18px 16px;
+  text-align: center;
+}
+
+.group {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px 2px;
+}
+
+.group-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.group-head .group-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-head .group-count {
+  font-weight: 400;
+  flex: none;
+}
+
+.group .job {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
+.job {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.jobs > .job:last-child {
+  border-bottom: none;
+}
+
+.job-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.job-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.bar {
+  height: 5px;
+  margin: 5px 0 3px;
+  background: var(--track);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.job[data-status="complete"] .bar > span {
+  background: var(--ok);
+}
+
+.job[data-status="paused"] .bar > span {
+  background: var(--warn);
+}
+
+.job[data-status="error"] .bar > span,
+.job[data-status="cancelled"] .bar > span {
+  background: var(--muted);
+}
+
+.job-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.job-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job[data-status="error"] .job-meta {
+  color: var(--bad);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.actions .btn {
+  padding: 1px 7px;
+  font-size: 11.5px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}

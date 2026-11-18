@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>YT-DL downloads</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="status" id="status">
+      <span class="dot" id="status-dot" aria-hidden="true"></span>
+      <div class="status-text">
+        <div id="status-title">Checking backend...</div>
+        <div class="muted small" id="status-meta"></div>
+      </div>
+      <button type="button" class="btn" id="start-btn" hidden>Start</button>
+      <button type="button" class="btn primary" id="update-btn" hidden>Update</button>
+      <button type="button" class="btn icon" id="options-btn" title="Settings" aria-label="Settings">&#9881;</button>
+    </header>
+
+    <div class="message" id="message" role="status" hidden></div>
+
+    <main id="jobs" class="jobs" aria-live="polite"></main>
+    <p class="empty muted" id="empty">No downloads yet. Use the Download button on a YouTube video, Short, playlist or channel.</p>
+
+    <footer class="footer">
+      <span class="muted small" id="summary"></span>
+      <button type="button" class="btn" id="clear-btn" disabled>Clear finished</button>
+    </footer>
+
+    <script src="../shared/constants.js"></script>
+    <script src="../shared/format.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

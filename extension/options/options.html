@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>YT-DL Firefox settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>YT-DL Firefox settings</h1>
+
+      <form id="form" novalidate>
+        <section class="card">
+          <h2>Default download</h2>
+          <p class="hint">Used by the main Download button. The panel arrow lets you pick per download.</p>
+          <div class="grid">
+            <label>Type <select id="kind" name="kind"></select></label>
+            <label data-for="video">Quality <select id="quality" name="quality"></select></label>
+            <label data-for="video">Codec <select id="codec" name="codec"></select></label>
+            <label data-for="video">Container <select id="container" name="container"></select></label>
+            <label data-for="audio">Audio format <select id="audio_format" name="audio_format"></select></label>
+            <label data-for="audio">MP3 bitrate <select id="audio_bitrate" name="audio_bitrate"></select></label>
+          </div>
+          <p class="hint" id="ffmpeg-hint" hidden></p>
+        </section>
+
+        <section class="card">
+          <h2>Downloads</h2>
+          <div class="grid">
+            <label
+              >Parallel downloads
+              <input type="number" id="concurrency" name="concurrency" min="1" max="5" step="1" />
+              <span class="hint">1 to 5 videos at once.</span>
+            </label>
+            <label
+              >Download speed-up
+              <input type="number" id="fragments" name="fragments" min="1" max="8" step="1" />
+              <span class="hint">Fragments fetched in parallel per video (1 to 8). Uses more bandwidth, not CPU.</span>
+            </label>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="cookies" name="cookies" />
+            <span
+              >Use Firefox cookies
+              <span class="hint">Needed for age-restricted, members-only and private videos.</span></span
+            >
+          </label>
+          <label class="check">
+            <input type="checkbox" id="notifications" name="notifications" />
+            <span>Desktop notifications when a download finishes or fails</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="auto_update" name="auto_update" />
+            <span
+              >Update yt-dlp automatically
+              <span class="hint">Runs once per browser session, only while nothing is downloading.</span></span
+            >
+          </label>
+        </section>
+
+        <section class="card">
+          <h2>Advanced: page selectors</h2>
+          <p class="hint">Change these only if YouTube moves its buttons and the Download button disappears.</p>
+          <div class="grid wide">
+            <label>Watch page button container <input type="text" id="watchContainer" name="watchContainer" spellcheck="false" /></label>
+            <label
+              >Watch page insertion point
+              <select id="watchInsertion" name="watchInsertion"></select>
+            </label>
+            <label>Shorts action bar <input type="text" id="shortsBar" name="shortsBar" spellcheck="false" /></label>
+          </div>
+          <button type="button" class="btn" id="reset-selectors">Reset selectors</button>
+        </section>
+
+        <div class="bar">
+          <button type="submit" class="btn primary" id="save">Save</button>
+          <button type="button" class="btn" id="reset">Reset all to defaults</button>
+          <span class="status" id="save-status" role="status"></span>
+        </div>
+      </form>
+
+      <section class="card">
+        <h2>Backend</h2>
+        <div class="bar">
+          <button type="button" class="btn" id="test">Test backend</button>
+          <span class="status" id="test-status" role="status"></span>
+        </div>
+      </section>
+    </main>
+
+    <script src="../shared/constants.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

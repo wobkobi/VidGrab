@@ -1,0 +1,190 @@
+:root {
+  --bg: #f9f9fb;
+  --surface: #ffffff;
+  --border: #e0e0e6;
+  --text: #18181b;
+  --muted: #6b6b73;
+  --accent: #d92b2b;
+  --accent-text: #ffffff;
+  --ok: #1f7a45;
+  --bad: #c42020;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1b22;
+    --surface: #2b2a33;
+    --border: #3f3e4a;
+    --text: #fbfbfe;
+    --muted: #a8a7b0;
+    --accent: #ff5a5a;
+    --accent-text: #1c1b22;
+    --ok: #4fd18b;
+    --bad: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 16px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.hint {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0 0 10px;
+  font-weight: 400;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px 16px;
+  margin: 10px 0 12px;
+}
+
+.grid.wide {
+  grid-template-columns: 1fr;
+}
+
+.grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.grid label .hint {
+  margin: 0;
+}
+
+.grid label.dimmed {
+  opacity: 0.55;
+}
+
+select,
+input[type="number"],
+input[type="text"] {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+input[type="text"] {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+
+input:invalid {
+  border-color: var(--bad);
+}
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 10px 0;
+}
+
+.check input {
+  margin-top: 4px;
+}
+
+.check .hint {
+  margin: 0;
+}
+
+.btn {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.btn:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.card .bar {
+  margin: 8px 0 0;
+}
+
+.status {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.bad {
+  color: var(--bad);
+}

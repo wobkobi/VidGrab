@@ -1,364 +1,171 @@
-# YouTube Video Downloader - Firefox Extension
+# YT-DL Firefox
 
-Personal-use Firefox extension that lets you download YouTube videos directly from the video page using `yt-dlp`.
+A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a local [yt-dlp](https://github.com/yt-dlp/yt-dlp) backend. Version 2.0.0.
 
-## Features
+## What it does
 
-- 🎬 **Download YouTube videos** directly from the video page
-- 📊 **Real-time download progress** tracking
-- ⚙️ **Backend API** with validation and concurrency control
-- 🔒 **Security-hardened** input validation (prevents command injection)
-- 🧪 **Comprehensive test suite** (37 passing tests)
+- Adds a download button to watch pages, Shorts, playlist headers and channel headers.
+- Downloads video (quality, codec preference, MP4 or MKV) or audio only (MP3 or M4A).
+- Runs a queue with parallel downloads, pause, resume, cancel and retry, shown in the toolbar popup.
+- Shows a desktop notification when a download finishes or fails.
+- Can use your Firefox cookies for age-restricted, members-only or private videos.
+- Keeps yt-dlp up to date and starts the backend automatically when Firefox needs it.
 
-### Coming Soon (Phase 2-4)
+Files are saved to your Downloads folder as `Title [id].ext`. Playlist and channel items go into `Downloads\<playlist title>\` or `Downloads\<channel name>\`.
 
-- Quality selection dropdown (1080p, 720p, 480p, 360p)
-- MP3 audio extraction
-- Auto-start backend via native messaging
-- Configurable DOM selectors
+## Requirements
 
-## Architecture
+- Windows 10 or 11 (macOS and Linux work too, with the equivalent commands).
+- Firefox 140 or newer.
+- Python 3.10 or newer.
+- [ffmpeg](https://ffmpeg.org/download.html) on `PATH`. Without it only 720p and lower video and M4A audio work; "Best", anything above 720p and MP3 need ffmpeg to merge or convert. Check with `ffmpeg -version`.
 
-```
-┌─────────────────┐       HTTP        ┌──────────────────┐
-│ Firefox         │  ────────────►     │ Python Backend   │
-│ Extension       │                    │ (FastAPI)        │
-│ • Injects UI    │  ◄────────────     │ • Wraps yt-dlp   │
-│ • Manages state │       JSON         │ • Port 18956     │
-└─────────────────┘                    └──────────────────┘
-```
+## Setup
 
----
+1. Create a virtual environment in the project folder and install the Python dependencies into it:
 
-## Prerequisites
-
-### Required Software
-
-1. **Python 3.8+**
-   - Download: https://www.python.org/downloads/
-   - Verify: `python --version`
-
-2. **yt-dlp** (YouTube downloader)
-   - Install: `pip install yt-dlp`
-   - Verify: `yt-dlp --version`
-
-3. **ffmpeg** (for MP3 extraction)
-   - Download: https://ffmpeg.org/download.html#build-windows
-   - Add to PATH
-   - Verify: `ffmpeg -version`
-
-4. **Firefox Browser**
-   - Download: https://www.mozilla.org/firefox/
-
----
-
-## Installation
-
-### 1. Backend Setup
-
-```powershell
-# Navigate to project directory
-cd C:\Users\wobkobi\Desktop\Projects\yt-dl-firefox
-
-# Install Python dependencies
-pip install -r backend\requirements.txt
-
-# Start the backend server
-python backend\server.py
-```
-
-You should see:
-
-```
-2026-03-05 14:32:10 INFO [server] ffmpeg found: MP3 extraction available
-2026-03-05 14:32:10 INFO [server] Backend started on 127.0.0.1:18956
-INFO:     Uvicorn running on http://127.0.0.1:18956 (Press CTRL+C to quit)
-```
-
-**Leave this terminal open** — the backend must be running for the extension to work.
-
-### 2. Test Backend (Optional)
-
-Open a new terminal:
-
-```powershell
-# Using PowerShell
-(Invoke-WebRequest -Uri http://127.0.0.1:18956/health -UseBasicParsing).Content
-
-# Expected output:
-# {"status":"ok","version":"1.0","ffmpeg_available":true}
-```
-
-### 3. Extension Setup
-
-1. Open Firefox
-2. Navigate to `about:debugging`
-3. Click **"This Firefox"**
-4. Click **"Load Temporary Add-on..."**
-5. Navigate to `C:\Users\wobkobi\Desktop\Projects\yt-dl-firefox\extension\`
-6. Select `manifest.json`
-
-The extension is now loaded! You should see "YT-DL Firefox Extension" in the list.
-
-### 4. Verify Installation
-
-1. Open a YouTube video (e.g., https://www.youtube.com/watch?v=jNQXAC9IVRw)
-2. Open Firefox's Browser Console (`Ctrl+Shift+J`)
-3. Look for these logs:
-   ```
-   [yt-dl-ext] Background script loaded
-   [yt-dl-ext] Backend healthy: {status: "ok", version: "1.0", ffmpeg_available: true}
-   [yt-dl-ext] Content script loaded
+   ```bat
+   py -3.12 -m venv .venv
+   .venv\Scripts\python -m pip install -r backend\requirements.txt
    ```
 
-If you see these logs, **Phase 1 (Walking Skeleton) is complete!** ✅
+   Any Python 3.10+ works in place of `py -3.12`. Keeping the packages in `.venv` means the editor, the terminal and the auto-started backend all use the same interpreter. `.vscode\settings.json` already points VS Code at it.
 
----
+2. Register the native messaging host so Firefox can start the backend on demand. Run it with the venv's Python, because the backend will run with whichever Python ran this:
 
-## Current Status: Phase 2 Complete! 🎉
+   ```bat
+   .venv\Scripts\python backend\install_native_host.py
+   ```
 
-### ✅ Implemented
+   This writes `native-messaging-host\yt_dl_backend.json`, points `backend\native_messaging.bat` at the Python you ran it with, and adds the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\yt_dl_backend`. Run it again if you move the folder or change Python. Remove it with `--uninstall`.
 
-**Phase 1: Walking Skeleton** ✅
+3. Load the add-on: open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on...** and pick `extension\manifest.json`.
 
-- [x] Backend server running on port 18956
-- [x] `/health` endpoint with ffmpeg detection
-- [x] Extension loads in Firefox
-- [x] Content script runs on YouTube pages
-- [x] Background script can communicate with backend
+### Permanent install
 
-**Phase 2: Core Download Flow (PR1-PR4)** ✅ **COMPLETE**
+Temporary add-ons are removed when Firefox restarts. To keep it installed, either:
 
-- [x] URL validation with security hardening (PR1)
-- [x] Download state management (PR2)
-- [x] POST `/download` endpoint (PR2)
-- [x] GET `/progress/{id}` endpoint (PR2)
-- [x] yt-dlp subprocess spawning (PR3)
-- [x] Progress parsing from yt-dlp output (PR3)
-- [x] **Download button injection (PR4)** ✨ NEW
-- [x] **Button click → backend integration (PR4)** ✨ NEW
-- [x] **Progress polling and UI updates (PR4)** ✨ NEW
-- [x] 37 passing tests (validation + API + subprocess)
+- Use Firefox Developer Edition or Nightly, set `xpinstall.signatures.required` to `false` in `about:config`, then zip the contents of `extension\` (or run `npx web-ext build -s extension`) and install the `.zip` from `about:addons` > gear menu > **Install Add-on From File...**; or
+- Sign it as an unlisted add-on with your AMO API keys: `npx web-ext sign -s extension --channel unlisted --api-key ... --api-secret ...`, then install the signed `.xpi` in normal Firefox.
 
-### 🚧 Next Up
-
-**Phase 3: Quality Selection + Progress**
-
-- [ ] GET `/formats` endpoint
-- [ ] Quality dropdown UI
-- [ ] Progress polling in extension
-- [ ] MP3 format handling
-
-**Phase 4: Auto-Start + Configuration**
-
-- [ ] Native messaging setup
-- [ ] Options page for selectors
-- [ ] Final documentation
-
----
-
-## Testing
-
-### Run All Tests
-
-```powershell
-cd backend
-
-# Run all unit and integration tests
-python -m pytest test_validation.py test_download_api.py test_subprocess.py::TestProgressRegex -v
-
-# Expected: 37 passed in ~0.6s
-```
-
-### Test Coverage
-
-- **22 validation tests** — URL/format_id security hardening
-- **10 API tests** — Endpoint behavior and concurrency
-- **5 subprocess tests** — Progress regex parsing
-
-### Manual API Testing
-
-```powershell
-# Start a download (use a short video for testing)
-curl -X POST http://127.0.0.1:18956/download `
-  -H "Content-Type: application/json" `
-  -d '{\"url\": \"https://www.youtube.com/watch?v=jNQXAC9IVRw\", \"format_id\": \"worst\"}'
-
-# Response: {"download_id": "abc123...", "status": "starting"}
-
-# Poll progress
-curl http://127.0.0.1:18956/progress/abc123...
-
-# Response: {"download_id": "abc123...", "status": "downloading", "percent": 45.2, ...}
-```
-
----
+The add-on id `yt-dl-firefox@local` must stay the same, because the native host manifest only allows that id.
 
 ## Usage
 
-### Download a YouTube Video
+The backend starts itself when Firefox starts. While Firefox is open the add-on checks in every 30 seconds, so the backend keeps running; it exits about 5 minutes after Firefox closes, once nothing is downloading. To run it by hand: `.venv\Scripts\python backend\server.py` (the native host must still be installed, because it hands the add-on the backend key).
 
-1. **Ensure backend is running**:
+- **Watch page**: a split button sits next to Like. The main part downloads straight away with your default options and then shows live progress, "Done", or an error you can click to retry. The arrow opens the panel: Video or Audio, quality (with size estimates), codec, container, MP3/M4A and bitrate. Use **Save as default** to change what the main button does.
+- **Shorts**: the same button appears in the Shorts action bar.
+- **Playlists and channels**: a "Download playlist" or "Download channel" button in the page header opens the panel in list mode. Choose all items or a range such as `1-10,15`. Quality is a maximum; items that don't reach it download at their best. A channel downloads the tab you are on when that is Videos, Shorts or Live, and its Videos tab otherwise. One request takes at most 1000 items, so use a range for bigger channels.
+- **Popup** (toolbar icon): backend status, ffmpeg and yt-dlp versions, an **Update** button when a newer yt-dlp is out, and every job with progress, speed and ETA. Pause, resume, cancel and retry jobs; open finished files or show them in their folder; **Clear finished** removes finished jobs from the list (the files stay). Playlist jobs are grouped with a total.
+- **Notifications**: one per finished or failed single video, and one summary per playlist or channel when its last item finishes. Clicking a notification shows the (first) downloaded file in Explorer.
 
-   ```powershell
-   python backend\server.py
-   ```
+The queue lives in memory only, so it is empty after the backend restarts.
 
-2. **Navigate to any YouTube video** in Firefox
+## Options
 
-3. **Click the "⬇️ Download" button** next to the Like button
+Open them from the popup's gear button or `about:addons`.
 
-4. **Watch the progress**:
-   - Button shows "⏳ Starting..."
-   - Then "⏳ X%" with increasing percentage
-   - Finally "✅ Complete!" when done
+| Setting | Default | Notes |
+|---|---|---|
+| Default download | Video, Best, any codec, MP4 (audio: MP3 192 kbps) | Used by the one-click button |
+| Parallel downloads | 2 | 1 to 5 |
+| Download speed-up | 4 | Fragments fetched at once per download, 1 to 8 |
+| Use Firefox cookies | Off | Passes `--cookies-from-browser firefox` to yt-dlp |
+| Notifications | On | |
+| Auto-update yt-dlp | On | Checks PyPI at most once a day and only updates while nothing is downloading |
+| Page selectors | | CSS selectors for the watch page button row (plus before/after placement) and the Shorts action bar. Change these if YouTube moves its buttons; **Reset selectors** restores the defaults |
 
-5. **Find your video** in `%USERPROFILE%\Downloads`
+**Test backend** shows whether the backend is reachable and which versions it runs.
 
-### Current Features
+## Performance notes
 
-- ✅ One-click download from YouTube video pages
-- ✅ Real-time progress display
-- ✅ Error handling with visual feedback
-- ✅ Automatic button injection on page navigation
+- **Parallel downloads** run several videos at once. Two is a good balance; more mainly helps with many small files.
+- **Fragments** (download speed-up) fetch parts of one video at once. This uses more bandwidth, not more CPU. Lower it if downloads slow down the rest of your network.
+- **Low priority**: yt-dlp and the ffmpeg it starts run at below-normal priority, so downloads and MP3 conversion don't compete with games or other foreground apps.
+- **File size guide** (rough, per 10 minutes of video):
 
-### Coming in Phase 3
+  | Format | Size |
+  |---|---|
+  | 1080p (H.264) | 200 to 350 MB |
+  | 1080p (VP9/AV1) | 100 to 200 MB |
+  | 720p (H.264) | 100 to 180 MB |
+  | 720p (VP9/AV1) | 50 to 100 MB |
+  | MP3 128 kbps | about 1 MB per minute |
+  | MP3 320 kbps | about 2.4 MB per minute |
 
-- Quality selection dropdown (1080p, 720p, 480p, 360p)
-- MP3 audio extraction
-- Visual progress bar
-- Download history
-
----
-
-## Project Structure
-
-```
-yt-dl-firefox/
-├── backend/
-│   ├── server.py              # FastAPI backend (✓ implemented)
-│   └── requirements.txt       # Python dependencies (✓ implemented)
-├── extension/
-│   ├── manifest.json          # Extension config (✓ implemented)
-│   ├── background.js          # Background script (✓ implemented)
-│   ├── content.js             # Content script (✓ implemented)
-│   ├── content.css            # UI styles (stub)
-│   └── icons/                 # Extension icons (placeholder)
-├── docs/
-│   ├── product/               # PRD, Backlog, Tech Lead Brief
-│   └── tech/                  # Architecture, Implementation Plan, Handoff
-└── README.md                  # This file
-```
-
----
-
-## Development Workflow
-
-### Running the Backend
-
-```powershell
-# Start backend
-python backend\server.py
-
-# Backend runs on http://127.0.0.1:18956
-# Press Ctrl+C to stop
-```
-
-### Reloading the Extension
-
-After making changes to extension code:
-
-1. Go to `about:debugging`
-2. Find "YT-DL Firefox Extension"
-3. Click **"Reload"**
-
-Or use the keyboard shortcut in the extension popup.
-
-### Viewing Logs
-
-- **Backend logs**: Check the terminal where `server.py` is running
-- **Extension logs**: Firefox Browser Console (`Ctrl+Shift+J`)
-- **Content script logs**: Firefox Developer Tools Console (`F12`) on YouTube page
-
----
+  4K is often 1 GB or more per 10 minutes. The panel shows an estimate per quality when YouTube reports one.
 
 ## Troubleshooting
 
-### Backend won't start
+| Problem | Fix |
+|---|---|
+| Button says "Backend not running" | Run `.venv\Scripts\python backend\install_native_host.py` again and restart Firefox. To see startup errors, start `.venv\Scripts\python backend\server.py` by hand. The auto-started backend logs to `backend\data\server.log` |
+| "Another program is using port 18956" | Something other than the backend holds the port, so the add-on refuses to talk to it. Close that program, then click **Start** in the popup |
+| "Needs ffmpeg" or greyed-out options | Install ffmpeg and make sure `ffmpeg -version` works in a new terminal, then restart the backend |
+| No button on the page | Reload the tab. If YouTube changed its layout, adjust the selectors in Options |
+| "Sign in to confirm your age", members-only or private videos | Turn on **Use Firefox cookies** and make sure you are signed in to YouTube in Firefox |
+| HTTP 403 or "Requested format is not available" | Usually an outdated yt-dlp. Click **Update** in the popup, or run `.venv\Scripts\python -m pip install -U yt-dlp` |
+| "Extension was reloaded - refresh this page" | The add-on was reloaded after the tab opened; refresh the tab |
+| Port 18956 already in use | Another backend is already running; that is fine. A second instance exits by itself (and logs a warning if the port holder is not the backend) |
 
-**Error**: `ModuleNotFoundError: No module named 'fastapi'`
+## API reference
 
-- **Solution**: Run `pip install -r backend\requirements.txt`
+The backend listens on `http://127.0.0.1:18956` only. Every request must send `X-YTDL-Client: 1`, and any `Origin` header must start with `moz-extension://`; otherwise it returns 403. Every request except `GET /health` must also send `X-YTDL-Token` with the per-install key in `backend\data\token` (401 otherwise). The native host passes that key to the add-on, so other add-ons and local programs cannot drive the backend. `GET /health?nonce=<hex>` adds `proof`, the hex HMAC-SHA256 of the nonce under the key; the add-on and the native host check it before trusting whatever answers on the port. Errors are JSON `{"error": "...", "detail": "..."}`.
 
-**Error**: `Address already in use` (port 18956)
+| Method and path | Body or query | Response |
+|---|---|---|
+| `GET /health` | `?nonce=` (optional) | `{status, version, ffmpeg, yt_dlp_version, yt_dlp_latest, update_available, concurrency, fragments, cookies, auto_update}`, plus `proof` when a nonce is sent |
+| `GET /info` | `?url=` | `{kind, id, title, uploader, duration, qualities: [{height, codecs, filesize_est}], entry_count, entries}`. 400 bad URL, 502 yt-dlp failure, 504 after 20s |
+| `POST /jobs` | `{url, options: {kind, quality, codec, container, audio_format, audio_bitrate}, items?}` | 202 `{jobs: [Job]}`. 400 bad URL or items, 422 needs ffmpeg |
+| `GET /jobs` | | `{jobs: [Job]}` |
+| `POST /jobs/{id}/{action}` | action: `pause`, `resume`, `cancel`, `retry`, `open`, `reveal` | `{job: Job}`. 404 unknown id, 409 invalid transition or file missing |
+| `DELETE /jobs` | `?finished=true` | `{removed}` (files are kept) |
+| `PUT /settings` | `{concurrency?: 1-5, fragments?: 1-8, cookies?, auto_update?}` | Settings object |
+| `POST /update` | | `{updated, version}`. 409 while downloads are active |
 
-- **Solution**: Another instance of the backend is running. Find and stop it, or restart your computer.
+Option values: `kind` video or audio; `quality` best, 2160, 1440, 1080, 720, 480 or 360; `codec` any, h264, vp9 or av1; `container` mp4 or mkv; `audio_format` mp3 or m4a; `audio_bitrate` 320, 192 or 128. `items` is a 1-based range like `1-10,15`.
 
-### Extension not working
+A job is `{id, group_id, group_title, url, title, kind, status, percent, speed, eta, filename, filepath, error, detail, options, created_at}`, where `status` is one of `queued`, `downloading`, `processing`, `paused`, `complete`, `error` or `cancelled`.
 
-**Extension doesn't load**
+## Development
 
-- Make sure you selected `manifest.json` (not a folder)
-- Check `about:debugging` for error messages
+```bat
+cd backend
+..\.venv\Scripts\python -m pytest -m "not slow" -q
+..\.venv\Scripts\python -m pytest -m slow -q
+cd ..
+node --test extension/tests
+npx web-ext lint -s extension
+npx web-ext run -s extension
+```
 
-**No logs in console**
+The `slow` test hits YouTube for real. Backend tests mock yt-dlp, pip and PyPI. `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
 
-- Verify the extension is enabled
-- Reload the YouTube page
-- Check if you're on a video page (`/watch?v=...`)
+## Project structure
 
-**Backend unreachable error**
-
-- Verify backend is running: `python backend\server.py`
-- Test health endpoint manually (see "Test Backend" above)
-- Check Windows Firewall isn't blocking port 18956
-
-### ffmpeg not found
-
-**Warning**: `ffmpeg not found: MP3 downloads will fail`
-
-- **Solution**: Install ffmpeg and add it to your system PATH
-- Verify with: `ffmpeg -version`
-- Restart the backend after installing ffmpeg
-
----
-
-## Security Notes
-
-- Backend binds to `127.0.0.1` **only** (localhost) — no external access
-- Extension permissions limited to YouTube and localhost
-- All URLs validated before passing to yt-dlp
-- No shell injection vulnerabilities (subprocess uses argument lists)
-
----
-
-## Contributing
-
-This is a personal-use project. If you want to extend it:
-
-1. Read the architecture docs in `docs/tech/`
-2. Follow the Implementation Plan for phased development
-3. Run manual tests after each change (see `docs/tech/HANDOFF.md`)
-
----
-
-## License
-
-Personal use only. Uses `yt-dlp` under the Unlicense.
-
----
-
-## Next Steps for Development
-
-Continue with **Phase 2** implementation:
-
-1. Read `docs/tech/IMPLEMENTATION_PLAN.md` — Step 2.1 onwards
-2. Implement URL validation module
-3. Create downloader module
-4. Inject Download button into YouTube page
-
-See `docs/tech/HANDOFF.md` for detailed task assignments.
-
----
-
-**Questions?** Check the docs in `docs/tech/` or review the Implementation Plan.
+```
+backend/
+  server.py              FastAPI routes, request guard, idle timeout
+  auth.py                Per-install key, /health proof and the port probe
+  models.py              Request and settings models (enums and bounds)
+  validation.py          URL allowlist and video/playlist/channel classification
+  ytdlp.py               yt-dlp arguments, /info, progress parsing
+  jobs.py                Download queue, workers, playlist expansion
+  updater.py             yt-dlp version check and pip update
+  platform_utils.py      Downloads folder, ffmpeg check, open/reveal, low priority
+  native_messaging.py    Native host that starts the backend (.bat launcher alongside)
+  install_native_host.py Native host registration
+  test_*.py, conftest.py Tests
+  data/                  Runtime settings, backend key, update state and log (ignored by git)
+extension/
+  manifest.json
+  background.js          Only HTTP client: message routing, polling, badge, notifications
+  shared/                constants.js, format.js, api.js
+  content/               Page buttons and the download panel (core, panel, watch, shorts, lists)
+  popup/                 Toolbar popup with the job list
+  options/               Settings page
+  icons/
+  tests/                 node --test tests for shared/
+native-messaging-host/   Generated native host manifest (ignored by git)
+```

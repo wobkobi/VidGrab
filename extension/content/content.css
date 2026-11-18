@@ -1,0 +1,493 @@
+/* Page buttons and the download panel. Colours come from YouTube's --yt-spec-* variables,
+   with fallbacks for when YouTube renames them: light by default, dark under html[dark]. */
+
+.yt-dl-split,
+.yt-dl-list-btn,
+.yt-dl-panel {
+  --yt-dl-fb-text: #0f0f0f;
+  --yt-dl-fb-text-2: #606060;
+  --yt-dl-fb-chip: rgba(0, 0, 0, 0.05);
+  --yt-dl-fb-chip-hover: rgba(0, 0, 0, 0.1);
+  --yt-dl-fb-line: rgba(0, 0, 0, 0.1);
+  --yt-dl-fb-surface: #fff;
+  --yt-dl-fb-field: #fff;
+  --yt-dl-fb-accent: #065fd4;
+  --yt-dl-fb-on-accent: #fff;
+  --yt-dl-fb-error: #cc0000;
+  --yt-dl-fb-success: #107516;
+
+  --yt-dl-text: var(--yt-spec-text-primary, var(--yt-dl-fb-text));
+  --yt-dl-text-2: var(--yt-spec-text-secondary, var(--yt-dl-fb-text-2));
+  --yt-dl-chip: var(--yt-spec-badge-chip-background, var(--yt-dl-fb-chip));
+  --yt-dl-chip-hover: var(--yt-spec-button-chip-background-hover, var(--yt-dl-fb-chip-hover));
+  --yt-dl-line: var(--yt-spec-10-percent-layer, var(--yt-dl-fb-line));
+  --yt-dl-surface: var(--yt-spec-menu-background, var(--yt-dl-fb-surface));
+  --yt-dl-field: var(--yt-spec-base-background, var(--yt-dl-fb-field));
+  --yt-dl-accent: var(--yt-spec-call-to-action, var(--yt-dl-fb-accent));
+  --yt-dl-on-accent: var(--yt-spec-text-primary-inverse, var(--yt-dl-fb-on-accent));
+  --yt-dl-error: var(--yt-dl-fb-error);
+  --yt-dl-success: var(--yt-dl-fb-success);
+
+  font-family: "Roboto", "Arial", sans-serif;
+  color: var(--yt-dl-text);
+}
+
+html[dark] .yt-dl-split,
+html[dark] .yt-dl-list-btn,
+html[dark] .yt-dl-panel {
+  --yt-dl-fb-text: #f1f1f1;
+  --yt-dl-fb-text-2: #aaa;
+  --yt-dl-fb-chip: rgba(255, 255, 255, 0.1);
+  --yt-dl-fb-chip-hover: rgba(255, 255, 255, 0.2);
+  --yt-dl-fb-line: rgba(255, 255, 255, 0.2);
+  --yt-dl-fb-surface: #282828;
+  --yt-dl-fb-field: #0f0f0f;
+  --yt-dl-fb-accent: #3ea6ff;
+  --yt-dl-fb-on-accent: #0f0f0f;
+  --yt-dl-fb-error: #ff4e45;
+  --yt-dl-fb-success: #2ba640;
+}
+
+.yt-dl-icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  position: relative;
+}
+
+.yt-dl-label-text {
+  position: relative;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Watch page split button */
+
+.yt-dl-split {
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  height: 36px;
+  margin-right: 8px;
+  position: relative;
+  vertical-align: middle;
+}
+
+.yt-dl-main,
+.yt-dl-arrow,
+.yt-dl-list-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  border: 0;
+  background: var(--yt-dl-chip);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 36px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.yt-dl-main {
+  position: relative;
+  overflow: hidden;
+  padding: 0 12px 0 10px;
+  border-radius: 18px 0 0 18px;
+}
+
+.yt-dl-arrow {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  border-radius: 0 18px 18px 0;
+  border-left: 1px solid var(--yt-dl-line);
+}
+
+.yt-dl-chevron {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid currentColor;
+}
+
+.yt-dl-main:hover,
+.yt-dl-arrow:hover,
+.yt-dl-list-btn:hover {
+  background: var(--yt-dl-chip-hover);
+}
+
+.yt-dl-main:focus-visible,
+.yt-dl-arrow:focus-visible,
+.yt-dl-list-btn:focus-visible {
+  outline: 2px solid var(--yt-dl-accent);
+  outline-offset: 2px;
+}
+
+.yt-dl-main[aria-disabled="true"] {
+  cursor: default;
+}
+
+.yt-dl-arrow[aria-expanded="true"] .yt-dl-chevron {
+  transform: rotate(180deg);
+}
+
+/* Progress fill behind the label, width driven by --yt-dl-progress from watch.js */
+.yt-dl-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--yt-dl-progress, 0%);
+  background: var(--yt-dl-accent);
+  opacity: 0.25;
+  transition: width 0.3s ease;
+  pointer-events: none;
+}
+
+.yt-dl-split[data-tone="active"] .yt-dl-fill,
+.yt-dl-split[data-tone="paused"] .yt-dl-fill {
+  display: block;
+}
+
+.yt-dl-split:not([data-tone="active"]):not([data-tone="paused"]) .yt-dl-fill {
+  display: none;
+}
+
+.yt-dl-split[data-tone="busy"] .yt-dl-main {
+  cursor: progress;
+}
+
+.yt-dl-split[data-tone="done"] {
+  color: var(--yt-dl-success);
+}
+
+.yt-dl-split[data-tone="error"] {
+  color: var(--yt-dl-error);
+}
+
+.yt-dl-split[data-tone="offline"] {
+  color: var(--yt-dl-text-2);
+}
+
+/* Shorts: round icon button with the state caption underneath, like YouTube's own column */
+
+.yt-dl-split.yt-dl-compact {
+  flex-direction: column;
+  align-items: center;
+  width: 64px;
+  height: auto;
+  margin: 0 0 16px;
+}
+
+.yt-dl-compact .yt-dl-main {
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.yt-dl-compact .yt-dl-arrow {
+  position: absolute;
+  top: 30px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--yt-dl-field);
+  border-radius: 50%;
+  background: var(--yt-dl-surface);
+  line-height: 1;
+}
+
+.yt-dl-compact .yt-dl-chevron {
+  border-left-width: 4px;
+  border-right-width: 4px;
+  border-top-width: 4px;
+}
+
+.yt-dl-caption {
+  display: block;
+  max-width: 64px;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.yt-dl-caption .yt-dl-label-text {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-height: 32px;
+}
+
+/* Playlist and channel header button */
+
+.yt-dl-list-btn {
+  flex: none;
+  height: 36px;
+  padding: 0 16px 0 12px;
+  margin: 0 0 0 8px;
+  border-radius: 18px;
+  vertical-align: middle;
+}
+
+/* Panel */
+
+.yt-dl-panel {
+  position: fixed;
+  z-index: 2400;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--yt-dl-surface);
+  box-shadow:
+    0 4px 32px rgba(0, 0, 0, 0.1),
+    0 16px 24px rgba(0, 0, 0, 0.2);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+
+html[dark] .yt-dl-panel {
+  color-scheme: dark;
+}
+
+.yt-dl-panel [hidden] {
+  display: none !important;
+}
+
+.yt-dl-panel:focus {
+  outline: none;
+}
+
+.yt-dl-panel *,
+.yt-dl-panel *::before,
+.yt-dl-panel *::after {
+  box-sizing: border-box;
+}
+
+.yt-dl-panel-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.yt-dl-panel-title {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.yt-dl-icon-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px 0 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  line-height: 32px;
+  cursor: pointer;
+}
+
+.yt-dl-icon-btn:hover {
+  background: var(--yt-dl-chip-hover);
+}
+
+.yt-dl-status {
+  margin: 0;
+  color: var(--yt-dl-text-2);
+}
+
+.yt-dl-status[data-tone="error"] {
+  color: var(--yt-dl-error);
+}
+
+.yt-dl-status[data-tone="success"] {
+  color: var(--yt-dl-success);
+}
+
+.yt-dl-segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 18px;
+  background: var(--yt-dl-chip);
+}
+
+.yt-dl-seg {
+  flex: 1;
+  height: 32px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.yt-dl-seg[aria-pressed="true"] {
+  background: var(--yt-dl-text);
+  color: var(--yt-dl-field);
+}
+
+.yt-dl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.yt-dl-row {
+  display: flex;
+  gap: 8px;
+}
+
+.yt-dl-row > .yt-dl-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.yt-dl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.yt-dl-label {
+  color: var(--yt-dl-text-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.yt-dl-select,
+.yt-dl-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--yt-dl-line);
+  border-radius: 8px;
+  background: var(--yt-dl-field);
+  color: var(--yt-dl-text);
+  font: inherit;
+}
+
+.yt-dl-select:disabled,
+.yt-dl-input:disabled {
+  opacity: 0.5;
+}
+
+.yt-dl-input[aria-invalid="true"] {
+  border-color: var(--yt-dl-error);
+}
+
+.yt-dl-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.yt-dl-fieldset > legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.yt-dl-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 16px;
+  cursor: pointer;
+}
+
+.yt-dl-muted {
+  color: var(--yt-dl-text-2);
+}
+
+.yt-dl-hint {
+  margin: 0;
+  color: var(--yt-dl-text-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.yt-dl-hint:empty {
+  display: none;
+}
+
+.yt-dl-hint-warn,
+.yt-dl-hint-error {
+  color: var(--yt-dl-error);
+}
+
+.yt-dl-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.yt-dl-btn {
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 18px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.yt-dl-btn-secondary {
+  background: var(--yt-dl-chip);
+  color: inherit;
+}
+
+.yt-dl-btn-secondary:hover {
+  background: var(--yt-dl-chip-hover);
+}
+
+.yt-dl-btn-primary {
+  background: var(--yt-dl-accent);
+  color: var(--yt-dl-on-accent);
+}
+
+.yt-dl-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.yt-dl-panel button:focus-visible,
+.yt-dl-panel select:focus-visible,
+.yt-dl-panel input:focus-visible {
+  outline: 2px solid var(--yt-dl-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yt-dl-fill {
+    transition: none;
+  }
+}

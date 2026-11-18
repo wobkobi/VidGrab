@@ -1,34 +1,59 @@
 {
-    "manifest_version": 2,
-    "name": "YT-DL Firefox Extension",
-    "version": "1.0.0",
-    "description": "Download YouTube videos with yt-dlp",
-    "icons": {
-        "48": "icons/icon-48.png",
-        "96": "icons/icon-96.png"
-    },
-    "permissions": [
-        "*://*.youtube.com/*",
-        "http://127.0.0.1/*",
-        "storage"
-    ],
-    "background": {
-        "scripts": [
-            "background.js"
-        ]
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "*://*.youtube.com/watch*"
-            ],
-            "js": [
-                "content.js"
-            ],
-            "css": [
-                "content.css"
-            ],
-            "run_at": "document_end"
-        }
-    ]
+  "manifest_version": 2,
+  "name": "YT-DL Firefox",
+  "version": "2.0.0",
+  "description": "Download YouTube videos, Shorts, playlists and channels as video or MP3 through a local yt-dlp backend.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "yt-dl-firefox@local",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon.svg"
+  },
+  "permissions": [
+    "storage",
+    "notifications",
+    "nativeMessaging",
+    "*://*.youtube.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": ["shared/constants.js", "shared/format.js", "shared/api.js", "background.js"],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": [
+        "shared/constants.js",
+        "shared/format.js",
+        "content/core.js",
+        "content/panel.js",
+        "content/watch.js",
+        "content/shorts.js",
+        "content/lists.js"
+      ],
+      "css": ["content/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_title": "YT-DL downloads",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/toolbar.svg",
+      "32": "icons/toolbar.svg"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  }
 }

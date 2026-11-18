@@ -1,159 +1,185 @@
-"""
-Unit tests for validation.py
-Tests URL and format_id validation with security focus
-"""
+"""URL classification and item-range tests."""
+
+from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
-from validation import validate_youtube_url, validate_format_id
+
+from validation import (
+    InvalidItems,
+    InvalidUrl,
+    classify_url,
+    format_items,
+    parse_items,
+    select_items,
+    watch_url,
+)
+
+VID = "jNQXAC9IVRw"
+WATCH = f"https://www.youtube.com/watch?v={VID}"
 
 
-class TestValidateYoutubeUrl:
-    """Test YouTube URL validation"""
-
-    def test_valid_youtube_watch_url(self):
-        """Valid youtube.com/watch?v=... URL"""
-        video_id = validate_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-        assert video_id == "dQw4w9WgXcQ"
-
-    def test_valid_youtube_watch_url_no_www(self):
-        """Valid youtube.com URL without www"""
-        video_id = validate_youtube_url("https://youtube.com/watch?v=dQw4w9WgXcQ")
-        assert video_id == "dQw4w9WgXcQ"
-
-    def test_valid_youtu_be_short_url(self):
-        """Valid youtu.be/... short URL"""
-        video_id = validate_youtube_url("https://youtu.be/dQw4w9WgXcQ")
-        assert video_id == "dQw4w9WgXcQ"
-
-    def test_valid_youtube_with_query_params(self):
-        """Valid URL with additional query parameters"""
-        video_id = validate_youtube_url(
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s"
-        )
-        assert video_id == "dQw4w9WgXcQ"
-
-    def test_valid_http_protocol(self):
-        """Valid URL with http (not https)"""
-        video_id = validate_youtube_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ")
-        assert video_id == "dQw4w9WgXcQ"
-
-    def test_invalid_domain(self):
-        """Reject non-YouTube domain"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url("https://example.com/watch?v=dQw4w9WgXcQ")
-        assert exc_info.value.status_code == 400
-        assert "Invalid YouTube URL" in exc_info.value.detail
-
-    def test_invalid_video_id_too_short(self):
-        """Reject video ID that's not 11 characters"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url("https://www.youtube.com/watch?v=short")
-        assert exc_info.value.status_code == 400
-
-    def test_invalid_video_id_too_long(self):
-        """Reject video ID that's too long"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQextra")
-        assert exc_info.value.status_code == 400
-
-    def test_invalid_video_id_special_chars(self):
-        """Reject video ID with invalid characters"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url("https://www.youtube.com/watch?v=../etc/pass")
-        assert exc_info.value.status_code == 400
-
-    def test_empty_url(self):
-        """Reject empty URL"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url("")
-        assert exc_info.value.status_code == 400
-
-    def test_none_url(self):
-        """Reject None URL"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_youtube_url(None)
-        assert exc_info.value.status_code == 400
-
-    def test_command_injection_attempt(self):
-        """Reject command injection attempts"""
-        malicious_urls = [
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ; rm -rf /",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ`whoami`",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ$(ls)",
-        ]
-        for url in malicious_urls:
-            with pytest.raises(HTTPException):
-                validate_youtube_url(url)
+@pytest.mark.parametrize(
+    "url",
+    [
+        WATCH,
+        f"http://youtube.com/watch?v={VID}",
+        f"https://m.youtube.com/watch?v={VID}&t=10s",
+        f"https://www.youtube.com/watch?v={VID}&list=PLBCF2DAC6FFB574DE&index=2",
+        f"https://www.youtube.com/shorts/{VID}",
+        f"https://www.youtube.com/shorts/{VID}/",
+        f"https://www.youtube.com/embed/{VID}",
+        f"https://www.youtube.com/live/{VID}",
+        f"https://youtu.be/{VID}",
+        f"https://youtu.be/{VID}?si=abcdef",
+        f"  {WATCH}  ",
+        f"https://WWW.YouTube.com/watch?v={VID}",
+    ],
+)
+def test_video_urls(url: str) -> None:
+    parsed = classify_url(url)
+    assert parsed.kind == "video"
+    assert parsed.id == VID
+    assert parsed.canonical == WATCH
 
 
-class TestValidateFormatId:
-    """Test format_id validation"""
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE",
+        "https://youtube.com/playlist?list=PLBCF2DAC6FFB574DE&si=x",
+        "https://www.youtube.com/watch?list=PLBCF2DAC6FFB574DE",
+    ],
+)
+def test_playlist_urls(url: str) -> None:
+    parsed = classify_url(url)
+    assert parsed.kind == "playlist"
+    assert parsed.id == "PLBCF2DAC6FFB574DE"
+    assert parsed.canonical == "https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE"
 
-    def test_valid_numeric_format_id(self):
-        """Valid numeric format ID"""
-        assert validate_format_id("137") == "137"
 
-    def test_valid_special_format_id(self):
-        """Valid special format ID"""
-        assert validate_format_id("best_video") == "best_video"
+@pytest.mark.parametrize(
+    ("url", "canonical"),
+    [
+        ("https://www.youtube.com/@jawed", "https://www.youtube.com/@jawed/videos"),
+        ("https://www.youtube.com/@jawed/videos", "https://www.youtube.com/@jawed/videos"),
+        ("https://www.youtube.com/@jawed/shorts", "https://www.youtube.com/@jawed/shorts"),
+        ("https://www.youtube.com/@jawed/featured", "https://www.youtube.com/@jawed/videos"),
+        ("https://www.youtube.com/@some.name-x_y/streams", "https://www.youtube.com/@some.name-x_y/streams"),
+        (
+            "https://www.youtube.com/channel/UC4QobU6STFB0P71PMvOGN5A",
+            "https://www.youtube.com/channel/UC4QobU6STFB0P71PMvOGN5A/videos",
+        ),
+        ("https://www.youtube.com/c/GoogleSearchStories/videos", "https://www.youtube.com/c/GoogleSearchStories/videos"),
+        ("https://www.youtube.com/user/jawed", "https://www.youtube.com/user/jawed/videos"),
+        (
+            "https://www.youtube.com/@%E6%97%A5%E6%9C%AC%E8%AA%9E/streams",
+            "https://www.youtube.com/@%E6%97%A5%E6%9C%AC%E8%AA%9E/streams",
+        ),
+        ("https://www.youtube.com/@日本語", "https://www.youtube.com/@%E6%97%A5%E6%9C%AC%E8%AA%9E/videos"),
+        ("https://www.youtube.com/@_under", "https://www.youtube.com/@_under/videos"),
+    ],
+)
+def test_channel_urls(url: str, canonical: str) -> None:
+    parsed = classify_url(url)
+    assert parsed.kind == "channel"
+    assert parsed.canonical == canonical
 
-    def test_valid_with_hyphen(self):
-        """Valid format ID with hyphen"""
-        assert validate_format_id("bestvideo-mp4") == "bestvideo-mp4"
 
-    def test_valid_mp3(self):
-        """Valid mp3 format ID"""
-        assert validate_format_id("mp3") == "mp3"
+def test_unicode_handle_id_is_decoded() -> None:
+    assert classify_url("https://www.youtube.com/@%D0%BA%D0%BE%D1%82").id == "@кот"
 
-    def test_invalid_path_traversal(self):
-        """Reject path traversal attempt"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_format_id("../../etc/passwd")
-        assert exc_info.value.status_code == 400
-        assert "Invalid format_id" in exc_info.value.detail
 
-    def test_invalid_shell_metacharacters(self):
-        """Reject shell metacharacters (non-whitespace)"""
-        # These should be rejected even after strip()
-        invalid_chars = [";", "|", "&", "$", "`", "(", ")", "<", ">"]
-        for char in invalid_chars:
-            with pytest.raises(HTTPException) as exc_info:
-                validate_format_id(f"137{char}")
-            assert exc_info.value.status_code == 400
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "   ",
+        "not a url",
+        "ftp://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "https://example.com/watch?v=jNQXAC9IVRw",
+        "https://youtube.com.evil.com/watch?v=jNQXAC9IVRw",
+        "https://evil.com/?u=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://user:pass@www.youtube.com/watch?v=jNQXAC9IVRw",
+        "https://www.youtube.com:8080/watch?v=jNQXAC9IVRw",
+        "https://www.youtube.com/watch?v=short",
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw;rm -rf",
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw&v=dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=--exec=calc",
+        "https://www.youtube.com/watch?v=jNQXAC9IVR$",
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw\n--exec calc",
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw\x00",
+        "https://youtu.be/jNQXAC9IVRw/extra",
+        "https://youtu.be/",
+        "https://www.youtube.com/playlist?list=",
+        "https://www.youtube.com/playlist?list=PL$(whoami)",
+        "https://www.youtube.com/playlist?list=PL%0Aecho",
+        "https://www.youtube.com/@",
+        "https://www.youtube.com/@bad$handle",
+        "https://www.youtube.com/@..",
+        "https://www.youtube.com/@%2E%2E",
+        "https://www.youtube.com/c/..",
+        "https://www.youtube.com/user/./streams",
+        "https://www.youtube.com/@a%2Fb",
+        "https://www.youtube.com/@a%2541",
+        "https://www.youtube.com/@%FF%FE",
+        "https://www.youtube.com/@-dash",
+        "https://www.youtube.com/@jawed/community",
+        "https://www.youtube.com/@jawed/videos/extra",
+        "https://www.youtube.com/channel/notachannelid",
+        "https://www.youtube.com/results?search_query=x",
+        "https://www.youtube.com/",
+        "https://www.youtube.com/feed/subscriptions",
+        "https://music.youtube.com/watch?v=jNQXAC9IVRw",
+        "--output=/tmp/x",
+        "https://www.youtube.com/watch?v=" + "a" * 3000,
+    ],
+)
+def test_rejected_urls(url: str) -> None:
+    with pytest.raises(InvalidUrl):
+        classify_url(url)
 
-    def test_strips_whitespace(self):
-        """Whitespace is stripped and remaining string validated"""
-        # Trailing whitespace is stripped
-        assert validate_format_id("137\n") == "137"
-        assert validate_format_id("137 ") == "137"
-        assert validate_format_id(" 137") == "137"
-        assert validate_format_id(" 137 ") == "137"
 
-        # But whitespace in the middle is rejected
-        with pytest.raises(HTTPException):
-            validate_format_id("137 456")
+def test_non_string_rejected() -> None:
+    with pytest.raises(InvalidUrl):
+        classify_url(None)  # type: ignore[arg-type]
 
-    def test_empty_format_id(self):
-        """Reject empty format_id"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_format_id("")
-        assert exc_info.value.status_code == 400
 
-    def test_none_format_id(self):
-        """Reject None format_id"""
-        with pytest.raises(HTTPException) as exc_info:
-            validate_format_id(None)
-        assert exc_info.value.status_code == 400
+def test_watch_url_validates_id() -> None:
+    assert watch_url(VID) == WATCH
+    with pytest.raises(InvalidUrl):
+        watch_url("../../etc")
 
-    def test_command_injection_attempt(self):
-        """Reject command injection attempts"""
-        malicious_ids = [
-            "137; rm -rf /",
-            "137`whoami`",
-            "137$(ls)",
-            "137 && cat /etc/passwd",
-        ]
-        for format_id in malicious_ids:
-            with pytest.raises(HTTPException):
-                validate_format_id(format_id)
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        ("1", [(1, 1)]),
+        ("1-10,15", [(1, 10), (15, 15)]),
+        (" 3 - 5 , 1 ", [(1, 1), (3, 5)]),
+        ("1-5,4-8,9", [(1, 9)]),
+        ("10,2,", [(2, 2), (10, 10)]),
+    ],
+)
+def test_parse_items(spec: str | None, expected: list[tuple[int, int]] | None) -> None:
+    assert parse_items(spec) == expected
+
+
+@pytest.mark.parametrize("spec", ["0", "5-3", "a", "1-", "-3", "1--2", "1;2", ",", "1-999999", "1" * 300])
+def test_parse_items_rejects(spec: str) -> None:
+    with pytest.raises(InvalidItems):
+        parse_items(spec)
+
+
+def test_format_items_round_trip() -> None:
+    assert format_items(parse_items("15, 1-10, 3") or []) == "1-10,15"
+
+
+def test_select_items_uses_one_based_positions() -> None:
+    entries = list("abcdefghij")
+    assert select_items(entries, None) == entries
+    assert select_items(entries, [(1, 2), (5, 5), (9, 20)]) == ["a", "b", "e", "i", "j"]
