@@ -22,9 +22,6 @@ env/
 .coverage.*
 htmlcov/
 
-# Backend runtime state (settings, update state, server log) and the generated native host files
-backend/data/
-native-messaging-host/*.json
 
 # Environment variables
 .env
@@ -32,6 +29,7 @@ native-messaging-host/*.json
 
 # Firefox extension packaging (web-ext build/sign output)
 web-ext-artifacts/
+extension/.amo-upload-uuid
 *.xpi
 *.zip
 .web-extension-id

@@ -75,6 +75,13 @@ html[dark] .yt-dl-panel {
   vertical-align: middle;
 }
 
+/* After the like/dislike pill: gap on the left instead, so the button doesn't touch the pill
+   (or the Return YouTube Dislike ratio bar under it) */
+.yt-dl-split[data-yt-dl-placement="last"] {
+  margin-left: 8px;
+  margin-right: 0;
+}
+
 .yt-dl-main,
 .yt-dl-arrow,
 .yt-dl-list-btn {

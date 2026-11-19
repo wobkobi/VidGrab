@@ -103,11 +103,19 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       if (busyText) return { text: busyText, tone: "busy", progress: null, action: "none", title: busyText };
       if (flash) return { text: flash, tone: "error", progress: null, action: "download", title: flash };
       if (content.backendDown() && !(job && ACTIVE.has(job.status))) {
+        if (content.helperMissing()) {
+          return { text: "Helper not installed", tone: "offline", progress: null, action: "download", title: content.helperMissingText(content.backend) };
+        }
         const title = (content.backend && content.backend.error) || "Click to start the backend and download";
         return { text: "Backend not running", tone: "offline", progress: null, action: "download", title };
       }
       if (content.backendStarting() && !(job && ACTIVE.has(job.status))) {
         return { text: "Starting backend...", tone: "busy", progress: null, action: "download", title: "Click to download once the backend is up" };
+      }
+      const setup = content.setupStatus();
+      if (setup && !(job && ACTIVE.has(job.status))) {
+        const text = setup.state === "error" ? "Setup failed" : "Setting up...";
+        return { text, tone: setup.state === "error" ? "error" : "busy", progress: null, action: "download", title: setup.text };
       }
       if (job) {
         const name = job.title || "this video";
@@ -119,6 +127,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
             return { text: YTDL.format.percent(pct), tone: "active", progress: pct, action: "none", title: `Downloading ${name}` };
           }
           case "processing":
+            if (YTDL.format.isConverting(job)) {
+              const pct = Math.max(0, Math.min(100, Number(job.percent) || 0));
+              return { text: YTDL.format.convertingLabel(job), tone: "active", progress: pct, action: "none", title: `Converting ${name} to fit the max size` };
+            }
             return { text: "Processing", tone: "active", progress: 100, action: "none", title: `Processing ${name}` };
           case "paused":
             return { text: "Paused", tone: "paused", progress: Number(job.percent) || 0, action: "resume", title: "Click to resume" };
@@ -192,6 +204,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         const started = await withBusy("Starting backend...", async () => {
           const res = await content.send({ type: "ensureBackend" });
           if (res.ok && !(res.data && res.data.reachable)) {
+            if (res.data && res.data.code === YTDL.constants.HELPER_MISSING) return { ok: false, error: "Helper not installed" };
             return { ok: false, error: (res.data && res.data.error) || "Backend not running" };
           }
           if (res.ok) content.backend = { reachable: true, health: res.data.health };
@@ -284,8 +297,11 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     // Only check the parent, not the exact position: YouTube adds its own buttons later and
     // re-ordering on every render would fight it in a mutation loop
     if (button.root.parentElement === container) return;
-    if (content.settings.selectors.watchInsertion !== "last") container.prepend(button.root);
-    else container.append(button.root);
+    const last = content.settings.selectors.watchInsertion === "last";
+    // content.css puts the 8px gap on the side facing YouTube's buttons
+    button.root.dataset.ytDlPlacement = last ? "last" : "first";
+    if (last) container.append(button.root);
+    else container.prepend(button.root);
   }
 
   /**

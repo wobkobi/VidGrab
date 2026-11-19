@@ -55,3 +55,12 @@ test("errors keep the short message and carry the detail separately", async () =
 test("update waits longer than the backend's pip timeout", () => {
   assert.ok(api.TIMEOUTS.update > 300000);
 });
+
+test("a 503 during setup keeps the backend's setup message and detail", async () => {
+  stubFetch(503, {error: "Setting up yt-dlp and ffmpeg", detail: "Downloading ffmpeg 40%"});
+  const res = await api.createJobs("https://www.youtube.com/watch?v=jNQXAC9IVRw", {kind: "video"});
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 503);
+  assert.equal(res.error, "Setting up yt-dlp and ffmpeg");
+  assert.equal(res.detail, "Downloading ffmpeg 40%");
+});

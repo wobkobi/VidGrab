@@ -54,3 +54,47 @@ test("statusLabel uses the shared labels with a capitalised fallback", () => {
   assert.equal(format.statusLabel("mystery"), "Mystery");
   assert.equal(format.statusLabel(""), "");
 });
+
+test("setupStatus treats a missing or unknown tools field as ready", () => {
+  for (const health of [null, undefined, {}, {tools: null}, {tools: "x"}, {tools: {state: "ready"}}, {tools: {state: "odd"}}]) {
+    assert.equal(format.setupStatus(health), null);
+  }
+});
+
+test("setupStatus reports install progress, preferring the step text", () => {
+  assert.deepEqual(format.setupStatus({tools: {state: "installing", percent: 42.7}}), {
+    state: "installing",
+    text: "Setting up yt-dlp and ffmpeg... 42%",
+  });
+  assert.equal(
+    format.setupStatus({tools: {state: "installing", step: "Downloading ffmpeg...", percent: 10}}).text,
+    "Downloading ffmpeg... 10%",
+  );
+  assert.equal(format.setupStatus({tools: {state: "installing", step: "Extracting\u2026"}}).text, "Extracting...");
+  assert.equal(format.setupStatus({tools: {state: "installing", step: "  ", percent: null}}).text, "Setting up yt-dlp and ffmpeg...");
+  assert.equal(format.setupStatus({tools: {state: "installing", percent: 150}}).text, "Setting up yt-dlp and ffmpeg... 100%");
+});
+
+test("setupStatus surfaces the setup error", () => {
+  assert.deepEqual(format.setupStatus({tools: {state: "error", error: "checksum mismatch"}}), {
+    state: "error",
+    text: "Setting up yt-dlp and ffmpeg failed: checksum mismatch",
+  });
+  assert.equal(format.setupStatus({tools: {state: "error"}}).text, "Setting up yt-dlp and ffmpeg failed: Unknown error");
+});
+
+test("isConverting needs status processing with stage converting", () => {
+  assert.equal(format.isConverting({status: "processing", stage: "converting"}), true);
+  assert.equal(format.isConverting({status: "processing", stage: ""}), false);
+  assert.equal(format.isConverting({status: "processing"}), false);
+  assert.equal(format.isConverting({status: "downloading", stage: "converting"}), false);
+  assert.equal(format.isConverting(null), false);
+});
+
+test("convertingLabel and convertingMeta show conversion progress", () => {
+  assert.equal(format.convertingLabel({percent: 45.7}), "Converting 45%");
+  assert.equal(format.convertingLabel({}), "Converting 0%");
+  assert.equal(format.convertingMeta({percent: 45, speed: "2.4x", eta: 30}), "Converting 45% · 2.4x · ETA 0:30");
+  assert.equal(format.convertingMeta({percent: 10, speed: "", eta: null}), "Converting 10%");
+  assert.equal(format.convertingMeta({percent: 10, eta: "01:05"}), "Converting 10% · ETA 01:05");
+});

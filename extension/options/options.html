@@ -18,9 +18,17 @@
             <label data-for="video">Quality <select id="quality" name="quality"></select></label>
             <label data-for="video">Codec <select id="codec" name="codec"></select></label>
             <label data-for="video">Container <select id="container" name="container"></select></label>
+            <label data-for="video">Max size <select id="max_size" name="max_size"></select></label>
+            <label data-for="video" id="max-size-custom" hidden
+              >Custom size (MB)
+              <input type="number" id="max_size_custom" name="max_size_custom" min="1" max="4000" step="1" placeholder="1-4000" />
+            </label>
             <label data-for="audio">Audio format <select id="audio_format" name="audio_format"></select></label>
             <label data-for="audio">MP3 bitrate <select id="audio_bitrate" name="audio_bitrate"></select></label>
           </div>
+          <p class="hint" id="size-hint" hidden>
+            Max size is for Discord uploads and always saves MP4. Converts to fit when no stream is small enough (slower, lower quality).
+          </p>
           <p class="hint" id="ffmpeg-hint" hidden></p>
         </section>
 

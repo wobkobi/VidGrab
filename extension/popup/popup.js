@@ -83,7 +83,8 @@ function el(tag, className, text) {
 }
 
 /**
- * Describe a job's output format, for example "MP4 1080p" or "MP3 192k".
+ * Describe a job's output format, for example "MP4 1080p", "MP4 best ≤20 MB" or "MP3 192k".
+ * A max size always produces MP4, whatever container the job asked for.
  * @param {object} options - Job options.
  * @returns {string} Short format tag.
  */
@@ -94,7 +95,9 @@ function formatTag(options) {
     return options.audio_format === "mp3" ? `${fmt} ${options.audio_bitrate}k` : fmt;
   }
   const quality = options.quality === "best" ? "best" : `${options.quality}p`;
-  return `${String(options.container || "").toUpperCase()} ${quality}`;
+  const maxSize = Number(options.max_size_mb) > 0 ? Number(options.max_size_mb) : 0;
+  const container = maxSize ? "MP4" : String(options.container || "").toUpperCase();
+  return maxSize ? `${container} ${quality} ≤${maxSize} MB` : `${container} ${quality}`;
 }
 
 /**
@@ -113,6 +116,7 @@ function metaText(job) {
       return parts.join(" · ");
     }
     case "processing":
+      if (format.isConverting(job)) return format.convertingMeta(job);
       return job.kind === "audio" ? "Converting audio..." : "Merging video and audio...";
     case "paused":
       return `${label} at ${format.percent(job.percent)}`;
@@ -295,28 +299,61 @@ function renderJobs(jobs) {
 }
 
 /**
+ * Show the helper download instruction in the meta line, as a link when
+ * {@link constants.HELPER_URL} is set and as plain text otherwise.
+ * @param {string} text - Instruction text.
+ */
+function renderHelperLink(text) {
+  if (!constants.HELPER_URL) {
+    els.meta.textContent = text;
+  } else {
+    const link = el("a", "", text);
+    link.href = constants.HELPER_URL;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    els.meta.replaceChildren(link);
+  }
+  els.meta.title = text;
+}
+
+/**
  * Render the backend status line.
- * @param {{reachable: boolean|null, health: object|null, error?: string|null}} backend - Backend state; reachable is null while it starts.
+ * @param {{reachable: boolean|null, health: object|null, error?: string|null, code?: string|null, detail?: string|null}} backend - Backend state; reachable is null while it starts.
  */
 function renderBackend(backend) {
   const health = backend && backend.reachable ? backend.health : null;
   els.dot.className = health ? "dot ok" : "dot bad";
   if (!health) {
     const starting = busy.start || (backend && backend.reachable === null);
-    els.title.textContent = starting ? "Starting backend..." : "Backend not running";
-    els.meta.textContent = starting
-      ? ""
-      : (backend && backend.error) || "Run install_native_host.py once and restart Firefox.";
-    els.meta.title = els.meta.textContent;
+    const missing = !starting && backend && backend.code === constants.HELPER_MISSING;
     els.start.hidden = starting;
     els.start.disabled = busy.start;
+    els.start.textContent = missing ? "Check again" : "Start";
     els.update.hidden = true;
+    if (missing) {
+      els.title.textContent = backend.error || constants.HELPER_MISSING_ERROR;
+      renderHelperLink(backend.detail || constants.HELPER_MISSING_DETAIL);
+      return;
+    }
+    els.title.textContent = starting ? "Starting backend..." : "Backend not running";
+    els.meta.textContent = starting ? "" : (backend && backend.error) || "Run the VidGrab helper once and restart Firefox.";
+    els.meta.title = els.meta.textContent;
     return;
   }
   els.start.hidden = true;
+  // First-run setup: the background refreshes /health every 2s and rebroadcasts progress
+  const setup = format.setupStatus(health);
+  if (setup) {
+    els.dot.className = setup.state === "error" ? "dot bad" : "dot busy";
+    els.title.textContent = setup.state === "error" ? "Setting up yt-dlp and ffmpeg failed" : setup.text;
+    els.meta.textContent = setup.state === "error" ? setup.text : "Downloads can start once setup finishes.";
+    els.meta.title = els.meta.textContent;
+    els.update.hidden = true;
+    return;
+  }
   els.title.textContent = `Backend running (v${health.version})`;
   const parts = [`yt-dlp ${health.yt_dlp_version}`];
-  parts.push(health.ffmpeg ? "ffmpeg found" : "ffmpeg missing: MP3 and above 720p unavailable");
+  parts.push(health.ffmpeg ? "ffmpeg found" : "ffmpeg missing: MP3, above 720p and max size unavailable");
   els.meta.textContent = parts.join(" · ");
   els.meta.title = els.meta.textContent;
   els.update.hidden = !health.update_available && !busy.update;
@@ -345,7 +382,8 @@ els.start.addEventListener("click", async () => {
   const res = await send({type: "ensureBackend"});
   busy.start = false;
   if (!res.ok) showMessage(res.error);
-  else if (!res.data.reachable) showMessage(res.data.error || "Backend did not start. Check that the native host is installed.");
+  else if (res.data.code === constants.HELPER_MISSING) showMessage("Still not found. Run the helper, then check again.");
+  else if (!res.data.reachable) showMessage(res.data.error || "Backend did not start. Check that the VidGrab helper is installed.");
   renderBackend(res.ok ? res.data : {reachable: false});
 });
 

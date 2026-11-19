@@ -7,14 +7,16 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   const content = YTDL.content;
   if (!content || !content.ready) return;
 
-  const { QUALITIES, CODECS, CONTAINERS, AUDIO_FORMATS, AUDIO_BITRATES, NEEDS_FFMPEG } = YTDL.constants;
+  const { QUALITIES, CODECS, CONTAINERS, AUDIO_FORMATS, AUDIO_BITRATES, MAX_SIZES, MAX_SIZE_CUSTOM, LIMITS } = YTDL.constants;
+  const { NEEDS_FFMPEG, HELPER_MISSING, maxSizeChoice, maxSizeValue } = YTDL.constants;
   const format = YTDL.format;
   const el = content.el;
 
   const VIEWPORT_MARGIN = 8;
   const ANCHOR_GAP = 6;
   const CLOSE_AFTER_SUCCESS_MS = 1200;
-  const OPTION_KEYS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate"];
+  const OPTION_KEYS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate", "max_size_mb"];
+  const SIZE_LIMITS = LIMITS.max_size_mb;
 
   // Map yt-dlp vcodec prefixes onto the codec preference values
   const CODEC_ALIASES = { avc1: "h264", avc: "h264", h264: "h264", vp09: "vp9", vp9: "vp9", av01: "av1", av1: "av1" };
@@ -86,7 +88,35 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     ui.quality = quality.select;
     ui.codec = codec.select;
     ui.container = container.select;
-    ui.videoSection = el("div", { className: "yt-dl-section" }, [quality.field, el("div", { className: "yt-dl-row" }, [codec.field, container.field])]);
+    const maxSize = selectField("Max size", "max_size");
+    const sizeErrorId = `yt-dl-size-error-${++idCounter}`;
+    const sizeInputId = `yt-dl-size-${idCounter}`;
+    ui.maxSize = maxSize.select;
+    ui.sizeInput = el("input", {
+      className: "yt-dl-input",
+      id: sizeInputId,
+      type: "number",
+      inputmode: "numeric",
+      min: String(SIZE_LIMITS.min),
+      max: String(SIZE_LIMITS.max),
+      step: "1",
+      placeholder: `${SIZE_LIMITS.min}-${SIZE_LIMITS.max}`,
+      autocomplete: "off",
+      "aria-describedby": sizeErrorId,
+    });
+    ui.sizeCustom = el("div", { className: "yt-dl-field", hidden: true }, [
+      el("label", { className: "yt-dl-label", for: sizeInputId, text: "Size (MB)" }),
+      ui.sizeInput,
+    ]);
+    ui.sizeError = el("p", { className: "yt-dl-hint yt-dl-hint-error", id: sizeErrorId });
+    ui.sizeHint = el("p", { className: "yt-dl-hint", hidden: true, text: "Converts to fit when no stream is small enough (slower, lower quality)" });
+    ui.videoSection = el("div", { className: "yt-dl-section" }, [
+      quality.field,
+      el("div", { className: "yt-dl-row" }, [codec.field, container.field]),
+      el("div", { className: "yt-dl-row" }, [maxSize.field, ui.sizeCustom]),
+      ui.sizeError,
+      ui.sizeHint,
+    ]);
 
     const audioFormat = selectField("Format", "audio_format");
     const bitrate = selectField("Bitrate", "audio_bitrate");
@@ -101,7 +131,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     ui.ffmpegHint = el("p", {
       className: "yt-dl-hint yt-dl-hint-warn",
       hidden: true,
-      text: "ffmpeg was not found, so qualities above 720p and MP3 are unavailable. Install ffmpeg and restart the backend.",
+      text: "ffmpeg was not found, so qualities above 720p, max size and MP3 are unavailable. The helper sets ffmpeg up by itself; check the toolbar popup for setup errors.",
     });
 
     if (mode === "list") {
@@ -234,12 +264,27 @@ ${detail}`);
     ui.videoSection.hidden = !isVideo;
     ui.audioSection.hidden = isVideo;
 
+    // Size first: with ffmpeg missing it falls back to Off, which re-enables the qualities below
+    const sizeBlocked = !allowed({ ...options, kind: "video", max_size_mb: SIZE_LIMITS.min });
+    const sizes = MAX_SIZES.map((s) => ({ ...s, disabled: s.value !== "0" && sizeBlocked }));
+    fillSelect(ui.maxSize, sizes, state.sizeChoice);
+    state.sizeChoice = ui.maxSize.value;
+    const custom = state.sizeChoice === MAX_SIZE_CUSTOM;
+    options.max_size_mb = maxSizeValue(state.sizeChoice, ui.sizeInput.value) || 0;
+    const sized = custom || options.max_size_mb > 0;
+    ui.sizeCustom.hidden = !custom;
+    ui.sizeHint.hidden = !sized;
+
     fillSelect(ui.quality, qualityOptions(), options.quality);
     options.quality = ui.quality.value;
     fillSelect(ui.codec, codecOptions(), options.codec);
     options.codec = ui.codec.value;
-    fillSelect(ui.container, CONTAINERS, options.container);
-    options.container = ui.container.value;
+    // A max size always saves MP4: show that, but keep the chosen container for when it is turned off
+    fillSelect(ui.container, CONTAINERS, sized ? "mp4" : options.container);
+    if (!sized) options.container = ui.container.value;
+    ui.container.disabled = sized;
+    if (sized) ui.container.title = "Max size always saves MP4";
+    else ui.container.removeAttribute("title");
 
     const formats = AUDIO_FORMATS.map((f) => ({ ...f, disabled: !allowed({ ...options, kind: "audio", audio_format: f.value }) }));
     fillSelect(ui.audioFormat, formats, options.audio_format);
@@ -251,8 +296,9 @@ ${detail}`);
     ui.bitrateHint.hidden = !lossless;
 
     ui.ffmpegHint.hidden = state.ffmpeg !== false;
-    ui.saveBtn.disabled = state.busy;
-    ui.downloadBtn.disabled = state.busy || !allowed(options) || !rangeValid();
+    const sizeOk = sizeValid();
+    ui.saveBtn.disabled = state.busy || !sizeOk;
+    ui.downloadBtn.disabled = state.busy || !allowed(options) || !rangeValid() || !sizeOk;
 
     if (state.mode === "list") {
       const count = state.info && typeof state.info.entry_count === "number" ? state.info.entry_count : null;
@@ -293,6 +339,26 @@ ${detail}`);
   }
 
   /**
+   * Validate the custom max size field and update its error text.
+   * @returns {boolean} True unless a video download has Custom chosen with an invalid size.
+   */
+  function sizeValid() {
+    const ui = state.ui;
+    if (state.options.kind !== "video" || state.sizeChoice !== MAX_SIZE_CUSTOM) {
+      ui.sizeInput.removeAttribute("aria-invalid");
+      ui.sizeError.textContent = "";
+      return true;
+    }
+    const valid = maxSizeValue(MAX_SIZE_CUSTOM, ui.sizeInput.value) !== null;
+    // Same as the range field: no error for an empty field until the user has typed
+    const shown = valid || (!ui.sizeInput.value && !state.sizeTouched) ? "" : `Enter a whole number of MB from ${SIZE_LIMITS.min} to ${SIZE_LIMITS.max}`;
+    ui.sizeError.textContent = shown;
+    if (shown) ui.sizeInput.setAttribute("aria-invalid", "true");
+    else ui.sizeInput.removeAttribute("aria-invalid");
+    return valid;
+  }
+
+  /**
    * Fetch /info and backend health for the open panel, ignoring results from an older open.
    */
   async function loadInfo() {
@@ -316,6 +382,8 @@ ${detail}`);
       state.info = infoRes.data;
       if (infoRes.data && infoRes.data.title) state.ui.title.textContent = infoRes.data.title;
       setStatus("");
+    } else if (infoRes.code === HELPER_MISSING) {
+      setStatus(content.helperMissingText(infoRes), "error");
     } else {
       const down = healthRes.ok && healthRes.data && healthRes.data.reachable === false;
       setStatus(down ? "Backend not running. Download will try to start it." : infoRes.error || "Could not load details", "error", infoRes.detail);
@@ -330,6 +398,7 @@ ${detail}`);
   function currentOptions() {
     const out = {};
     for (const key of OPTION_KEYS) out[key] = state.options[key];
+    if (out.kind === "video" && out.max_size_mb > 0) out.container = "mp4";
     return out;
   }
 
@@ -340,6 +409,12 @@ ${detail}`);
    */
   async function download() {
     if (!state || state.busy || !allowed(state.options)) return;
+    if (!sizeValid()) {
+      state.sizeTouched = true;
+      sizeValid();
+      state.ui.sizeInput.focus();
+      return;
+    }
     if (!rangeValid()) {
       state.rangeTouched = true;
       rangeValid();
@@ -358,7 +433,8 @@ ${detail}`);
       if (!started.ok || !started.data || !started.data.reachable) {
         state.busy = false;
         render();
-        setStatus((started.data && started.data.error) || "Backend not running. Check the README setup steps.", "error");
+        if (started.data && started.data.code === HELPER_MISSING) setStatus(content.helperMissingText(started.data), "error");
+        else setStatus((started.data && started.data.error) || "Backend not running. Check the README setup steps.", "error");
         return;
       }
     }
@@ -372,7 +448,8 @@ ${detail}`);
     if (!res.ok) {
       state.busy = false;
       render();
-      setStatus(res.error || "Download failed to start", "error", res.detail);
+      if (res.code === HELPER_MISSING) setStatus(content.helperMissingText(res), "error");
+      else setStatus(res.error || "Download failed to start", "error", res.detail);
       return;
     }
     // Stay busy until the panel closes so a second click or Enter cannot queue it again
@@ -496,6 +573,18 @@ ${detail}`);
     ui.container.addEventListener("change", () => setOption("container", ui.container.value));
     ui.audioFormat.addEventListener("change", () => setOption("audio_format", ui.audioFormat.value));
     ui.bitrate.addEventListener("change", () => setOption("audio_bitrate", ui.bitrate.value));
+    ui.maxSize.addEventListener("change", () => {
+      state.sizeChoice = ui.maxSize.value;
+      render();
+      if (state.sizeChoice === MAX_SIZE_CUSTOM) ui.sizeInput.focus();
+    });
+    ui.sizeInput.addEventListener("input", () => {
+      state.sizeTouched = true;
+      render();
+    });
+    ui.sizeInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") download();
+    });
     ui.downloadBtn.addEventListener("click", download);
     ui.saveBtn.addEventListener("click", saveDefault);
     ui.root.addEventListener("keydown", isolateKeys);
@@ -571,7 +660,10 @@ ${detail}`);
       ffmpeg: null,
       busy: false,
       rangeTouched: false,
+      sizeChoice: maxSizeChoice(content.settings.defaults.max_size_mb),
+      sizeTouched: false,
     };
+    if (state.sizeChoice === MAX_SIZE_CUSTOM) ui.sizeInput.value = String(content.settings.defaults.max_size_mb);
 
     bindEvents();
     setStatus("");

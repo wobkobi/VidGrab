@@ -83,7 +83,60 @@ YTDL.format = (function () {
     return status.charAt(0).toUpperCase() + status.slice(1);
   }
 
-  return {bytes, eta, percent, parseRange, statusLabel};
+  /**
+   * Whether a job is being re-encoded to fit its max size. The backend reports this as
+   * status "processing" with stage "converting", and `percent` then tracks the conversion.
+   * @param {unknown} job - Job from the backend.
+   * @returns {boolean} True while converting.
+   */
+  function isConverting(job) {
+    return Boolean(job) && job.status === "processing" && job.stage === "converting";
+  }
+
+  /**
+   * Short label for a converting job, for example "Converting 45%".
+   * @param {{percent?: unknown}} job - Converting job.
+   * @returns {string} Label with the conversion percentage.
+   */
+  function convertingLabel(job) {
+    return `Converting ${percent(job && job.percent)}`;
+  }
+
+  /**
+   * Progress line for a converting job: percentage, then speed ("2.4x") and ETA when known.
+   * @param {{percent?: unknown, speed?: unknown, eta?: unknown}} job - Converting job.
+   * @returns {string} For example "Converting 45% · 2.4x · ETA 0:30".
+   */
+  function convertingMeta(job) {
+    const parts = [convertingLabel(job)];
+    if (job && typeof job.speed === "string" && job.speed.trim()) parts.push(job.speed.trim());
+    const left = eta(job && job.eta);
+    if (left) parts.push(`ETA ${left}`);
+    return parts.join(" · ");
+  }
+
+  /**
+   * Describe the first-run yt-dlp/ffmpeg setup reported in `/health.tools`. A missing or
+   * malformed `tools` field (older backends) or an unknown state counts as ready.
+   * @param {unknown} health - The /health body.
+   * @returns {{state: "installing"|"error", text: string}|null} Status line, or null when ready.
+   */
+  function setupStatus(health) {
+    const tools = health && typeof health === "object" ? health.tools : null;
+    if (!tools || typeof tools !== "object") return null;
+    if (tools.state === "error") {
+      const error = typeof tools.error === "string" && tools.error.trim() ? tools.error.trim() : "Unknown error";
+      return {state: "error", text: `Setting up yt-dlp and ffmpeg failed: ${error}`};
+    }
+    if (tools.state !== "installing") return null;
+    // Drop trailing dots and ellipses so a step like "Downloading ffmpeg..." does not end up with six
+    const step = typeof tools.step === "string" ? tools.step.trim().replace(/(\.|\u2026)+$/, "") : "";
+    const label = step || "Setting up yt-dlp and ffmpeg";
+    const pct = tools.percent === null || tools.percent === undefined || tools.percent === "" ? NaN : Number(tools.percent);
+    return {state: "installing", text: Number.isFinite(pct) ? `${label}... ${percent(pct)}` : `${label}...`};
+  }
+
+  return {bytes, eta, percent, parseRange, statusLabel, isConverting, convertingLabel, convertingMeta, setupStatus};
 })();
 
 if (typeof module !== "undefined") module.exports = YTDL.format;
