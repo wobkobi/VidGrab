@@ -122,11 +122,11 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 	formats := core.FitFormats(raw)
 	qualityCap := core.QualityCap(j.options.Quality)
 	duration := core.InfoDuration(raw)
-	sourceHeight := core.SourceHeight(formats, qualityCap)
-	if sourceHeight == 0 {
-		sourceHeight = qualityCap
+	source := core.SourceShape(formats, qualityCap)
+	if source.Height == 0 {
+		source.Height = qualityCap
 	}
-	plan, planErr := core.PlanEncode(limitMB, duration, sourceHeight)
+	plan, planErr := core.PlanEncode(limitMB, duration, source)
 	choice, fits := core.SelectFit(formats, qualityCap, core.LimitBytes(limitMB))
 	// A fit shorter than the conversion would be loses to converting, which gives the
 	// better picture; when no conversion is possible any fit is better than failing
@@ -150,8 +150,8 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 		if planErr != nil {
 			return planOutcome(planErr)
 		}
-		log.Printf("jobs: %s needs converting to fit %d MB: %dp at %d+%d kbps", j.videoID, limitMB,
-			plan.Height, plan.VideoKbps, plan.AudioKbps)
+		log.Printf("jobs: %s needs converting to fit %d MB: %dp at up to %g fps, %d+%d kbps", j.videoID, limitMB,
+			plan.Height, plan.FPS, plan.VideoKbps, plan.AudioKbps)
 		args = core.BuildSourceArgs(j.url, j.outDir, cookies, fragments, tools, tag, plan.Height)
 	}
 	parser := core.NewOutputParser(streams)
@@ -237,9 +237,14 @@ func (q *JobQueue) commit(j *job, runID int, from, base string) (res outcome, st
 	return outcome{filepath: final}, false
 }
 
-// pickEncoder returns the encoder to convert with: the probe's pick, unless a real encode with
-// it already failed in this process, in which case libx264.
-func (q *JobQueue) pickEncoder(ctx context.Context, ffmpeg string) string {
+// pickEncoder returns the encoder to convert plan with: libx264 when the plan's bitrate is low
+// enough that it beats hardware (see core.EncodePlan.PrefersX264, which also skips the probe),
+// else the probe's pick, unless a real encode with it already failed in this process, in which
+// case libx264.
+func (q *JobQueue) pickEncoder(ctx context.Context, ffmpeg string, plan core.EncodePlan) string {
+	if plan.PrefersX264() {
+		return core.EncoderX264
+	}
 	encoder := q.encoder(ctx, ffmpeg)
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -252,9 +257,10 @@ func (q *JobQueue) pickEncoder(ctx context.Context, ffmpeg string) string {
 // convert re-encodes st.source to fit the job's limit and returns the outcome; a stopped run
 // returns an empty outcome, which settle ignores.
 //
-// A hardware encoder that fails is dropped for the rest of the process and the attempt is
-// rerun with libx264. An encode that still comes out over the limit is retried once at
-// retryBitrateFactor of the bitrate. On success the encode is committed and the working file
+// Each attempt picks its encoder by its bitrate (see pickEncoder). A hardware encoder that
+// fails is dropped for the rest of the process and the attempt is rerun with libx264. An
+// encode that still comes out over the limit is retried once at retryBitrateFactor of the
+// bitrate. On success the encode is committed and the working file
 // deleted; on failure both are deleted, except that an encode that fits but cannot be moved
 // to its final name is kept. A pause keeps the working file for the resume.
 func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.Tools, st sizedState) outcome {
@@ -268,10 +274,6 @@ func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.To
 	q.mu.Unlock()
 
 	ffmpeg := core.FfmpegPath(tools)
-	encoder := q.pickEncoder(ctx, ffmpeg)
-	if q.stopped(j, runID) {
-		return outcome{}
-	}
 	output := encodePath(st.source, workTag(j))
 	limitMB := j.options.MaxSizeMB
 	limit := core.LimitBytes(limitMB)
@@ -295,6 +297,11 @@ func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.To
 		plan := st.plan
 		if attempt > 0 {
 			plan = plan.Scaled(retryBitrateFactor)
+		}
+		// Picked per attempt, so a retry that drops under the hardware threshold uses libx264
+		encoder := q.pickEncoder(ctx, ffmpeg, plan)
+		if q.stopped(j, runID) {
+			return outcome{}
 		}
 		enc := core.EncodeJob{Ffmpeg: ffmpeg, Encoder: encoder, Source: st.source, Output: output,
 			PassLog: passLog, Plan: plan}

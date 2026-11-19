@@ -68,9 +68,9 @@ func TestFitFormatsFromRawJSON(t *testing.T) {
 		{"format_id": "sb0", "vcodec": "none", "acodec": "none", "ext": "mhtml"},
 		{"format_id": "140", "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "filesize": 3400000},
 		{"format_id": "251", "vcodec": "none", "acodec": "opus", "ext": "webm", "filesize_approx": 3500000},
-		{"format_id": "137", "vcodec": "avc1.640028", "acodec": "none", "ext": "mp4", "width": 1920, "height": 1080, "filesize": null, "filesize_approx": 41000000},
+		{"format_id": "137", "vcodec": "avc1.640028", "acodec": "none", "ext": "mp4", "width": 1920, "height": 1080, "fps": 60, "filesize": null, "filesize_approx": 41000000},
 		{"format_id": "616", "vcodec": "vp09.00.40.08", "acodec": "none", "ext": "mp4", "width": 1080, "height": 1920},
-		{"format_id": "18", "vcodec": "avc1.42001E", "acodec": "mp4a.40.2", "ext": "mp4", "width": 640, "height": 360, "filesize": 6000000},
+		{"format_id": "18", "vcodec": "avc1.42001E", "acodec": "mp4a.40.2", "ext": "mp4", "width": 640, "height": 360, "fps": 29.97, "filesize": 6000000},
 		{"format_id": "140-drc", "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "filesize": 3400000, "language_preference": 10, "quality": 3},
 		{"format_id": "140-1", "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "filesize": 3400000, "language_preference": -1, "quality": 3},
 		{"format_id": "139", "vcodec": "none", "acodec": "mp4a.40.5", "ext": "m4a", "filesize": 1200000, "language_preference": 10, "quality": 2, "format_note": "low, DRC"}
@@ -83,10 +83,10 @@ func TestFitFormatsFromRawJSON(t *testing.T) {
 	want := []FitFormat{
 		{ID: "140", ACodec: "aac", Ext: "m4a", Size: 3.4e6, Audio: AudioRank{LangPref: -1}},
 		{ID: "251", ACodec: "opus", Ext: "webm", Size: 3.5e6, Audio: AudioRank{LangPref: -1}},
-		{ID: "137", VCodec: "h264", Ext: "mp4", Height: 1080, Size: 41e6},
+		{ID: "137", VCodec: "h264", Ext: "mp4", Height: 1080, Aspect: 1920.0 / 1080, FPS: 60, Size: 41e6},
 		// Portrait: the shorter side is the height yt-dlp's res sort uses
-		{ID: "616", VCodec: "vp9", Ext: "mp4", Height: 1080},
-		{ID: "18", VCodec: "h264", ACodec: "aac", Ext: "mp4", Height: 360, Size: 6e6, Audio: AudioRank{LangPref: -1}},
+		{ID: "616", VCodec: "vp9", Ext: "mp4", Height: 1080, Aspect: 1920.0 / 1080},
+		{ID: "18", VCodec: "h264", ACodec: "aac", Ext: "mp4", Height: 360, Aspect: 640.0 / 360, FPS: 29.97, Size: 6e6, Audio: AudioRank{LangPref: -1}},
 		{ID: "140-drc", ACodec: "aac", Ext: "m4a", Size: 3.4e6, Audio: AudioRank{LangPref: 10, DRC: true, Quality: 3}},
 		{ID: "140-1", ACodec: "aac", Ext: "m4a", Size: 3.4e6, Audio: AudioRank{LangPref: -1, Quality: 3}},
 		{ID: "139", ACodec: "aac", Ext: "m4a", Size: 1.2e6, Audio: AudioRank{LangPref: 10, DRC: true, Quality: 2}},
@@ -105,11 +105,12 @@ func TestFitFormatsFromRawJSON(t *testing.T) {
 	if d := InfoDuration(map[string]any{"duration": nil}); d != 0 {
 		t.Errorf("missing duration %v", d)
 	}
-	if h := SourceHeight(got, 0); h != 1080 {
-		t.Errorf("SourceHeight = %d", h)
+	if s := SourceShape(got, 0); s != (VideoShape{Height: 1080, Aspect: 1920.0 / 1080, FPS: 60}) {
+		t.Errorf("SourceShape = %+v", s)
 	}
-	if h := SourceHeight(got, 720); h != 360 {
-		t.Errorf("capped SourceHeight = %d", h)
+	// The cap leaves only the 360p stream, so its frame rate is the source's
+	if s := SourceShape(got, 720); s != (VideoShape{Height: 360, Aspect: 640.0 / 360, FPS: 29.97}) {
+		t.Errorf("capped SourceShape = %+v", s)
 	}
 }
 
@@ -120,43 +121,92 @@ func TestQualityCap(t *testing.T) {
 }
 
 func TestPlanEncode(t *testing.T) {
+	wide := 16.0 / 9
 	cases := []struct {
-		name                 string
-		limitMB              int
-		duration             float64
-		maxHeight            int
-		video, audio, height int
-		capFPS               bool
+		name     string
+		limitMB  int
+		duration float64
+		source   VideoShape
+		want     EncodePlan
 	}{
-		// 10 MB * 8 * 0.95 = 76,000,000 bits; / 60 s / 1000 = 1266 kbps total
-		{"10 MB, 1 min (1266 kbps)", 10, 60, 1080, 1266 - 96, 96, 360, true},
-		{"10 MB, 45 s (1688 kbps)", 10, 45, 1080, 1688 - 96, 96, 480, true},
-		// 76e6 / 300 / 1000 = 253 kbps total: below 400, so audio drops to 64
-		{"10 MB, 5 min", 10, 300, 1080, 253 - 64, 64, 240, true},
-		// 50 MB: 380e6 bits / 60 / 1000 = 6333 kbps
-		{"50 MB, 1 min", 50, 60, 2160, 6333 - 96, 96, 1080, false},
-		{"50 MB, 1 min, 720p source", 50, 60, 720, 6333 - 96, 96, 720, false},
-		{"25 MB, 1 min (3166 kbps)", 25, 60, 0, 3166 - 96, 96, 720, false},
-		{"10 MB, 2 min (633 kbps)", 10, 120, 0, 633 - 96, 96, 240, true},
-		{"never upscales a 144p source", 100, 10, 144, 75904, 96, 144, true},
+		// 20 MB * 8 * 0.95 = 152,000,000 bits; / 1421 s / 1000 = 106 kbps total: under 200, so
+		// 32k mono audio and 74 video, which gets 10 fps. 360p: 74000 / (640*360*10) = 0.032
+		// bits per pixel, just enough; 480p would get 0.018
+		{"20 MB, 24 min screen recording", 20, 1421, VideoShape{1080, wide, 30},
+			EncodePlan{VideoKbps: 74, AudioKbps: 32, Channels: 1, Height: 360, FPS: 10}},
+		// 152e6 / 182 / 1000 = 835 kbps total: 96k stereo, 739 video at the source's 24 fps.
+		// 720p: 739000 / (1280*720*24) = 0.033; 1080p would get 0.015
+		{"20 MB, 3 min music video", 20, 182, VideoShape{1080, wide, 24},
+			EncodePlan{VideoKbps: 739, AudioKbps: 96, Channels: 2, Height: 720, FPS: 24}},
+		// The height is the shorter side, so 9:16 portrait plans like landscape
+		{"portrait 9:16", 20, 182, VideoShape{1080, 1920.0 / 1080, 24},
+			EncodePlan{VideoKbps: 739, AudioKbps: 96, Channels: 2, Height: 720, FPS: 24}},
+		// A taller phone frame has more pixels per line: 720*1560*24 gives 0.027, so 480p
+		{"portrait 9:19.5", 20, 182, VideoShape{1080, 2340.0 / 1080, 24},
+			EncodePlan{VideoKbps: 739, AudioKbps: 96, Channels: 2, Height: 480, FPS: 24}},
+		{"never above a 480p source", 20, 182, VideoShape{480, wide, 24},
+			EncodePlan{VideoKbps: 739, AudioKbps: 96, Channels: 2, Height: 480, FPS: 24}},
+		{"an odd source height is kept", 20, 182, VideoShape{400, wide, 24},
+			EncodePlan{VideoKbps: 739, AudioKbps: 96, Channels: 2, Height: 400, FPS: 24}},
+		// 50 MB: 380e6 bits / 60 / 1000 = 6333 kbps; a 60 fps source keeps every other frame
+		{"60 fps source capped to 30", 50, 60, VideoShape{2160, wide, 60},
+			EncodePlan{VideoKbps: 6237, AudioKbps: 96, Channels: 2, Height: 1080, FPS: 30}},
+		{"50 fps source halved to 25", 50, 60, VideoShape{1080, wide, 50},
+			EncodePlan{VideoKbps: 6237, AudioKbps: 96, Channels: 2, Height: 1080, FPS: 25}},
+		// 10 MB: 76e6 / 300 / 1000 = 253 kbps total: 64k stereo, 189 video at 10 fps.
+		// Nothing known about the source: 16:9, 10 fps, 480p gets 189000 / (853*480*10) = 0.046
+		{"unknown source", 10, 300, VideoShape{},
+			EncodePlan{VideoKbps: 189, AudioKbps: 64, Channels: 2, Height: 480, FPS: 10}},
+		// Every third frame of 25 fps (8.3) plays more evenly than an uneven 10
+		{"25 fps source at 10 fps", 10, 300, VideoShape{1080, wide, 25},
+			EncodePlan{VideoKbps: 189, AudioKbps: 64, Channels: 2, Height: 480, FPS: 25.0 / 3}},
+		// 76e6 / 200 / 1000 = 380 kbps total: 316 video, so up to 15 fps; 24 fps halves to 12
+		{"24 fps source at 15 fps", 10, 200, VideoShape{1080, wide, 24},
+			EncodePlan{VideoKbps: 316, AudioKbps: 64, Channels: 2, Height: 480, FPS: 12}},
+		{"30 fps source at 15 fps", 10, 200, VideoShape{1080, wide, 30},
+			EncodePlan{VideoKbps: 316, AudioKbps: 64, Channels: 2, Height: 480, FPS: 15}},
+		{"a slower source keeps its rate", 50, 60, VideoShape{1080, wide, 23.976},
+			EncodePlan{VideoKbps: 6237, AudioKbps: 96, Channels: 2, Height: 1080, FPS: 23.976}},
+		{"never upscales a 144p source", 100, 10, VideoShape{144, wide, 30},
+			EncodePlan{VideoKbps: 75904, AudioKbps: 96, Channels: 2, Height: 144, FPS: 30}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			plan, err := PlanEncode(c.limitMB, c.duration, c.maxHeight)
+			plan, err := PlanEncode(c.limitMB, c.duration, c.source)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := EncodePlan{VideoKbps: c.video, AudioKbps: c.audio, Height: c.height, CapFPS: c.capFPS}
-			if plan != want {
-				t.Fatalf("plan %+v, want %+v", plan, want)
+			if plan != c.want {
+				t.Fatalf("plan %+v, want %+v", plan, c.want)
 			}
 		})
 	}
 }
 
+func TestPlanEncodeAudioSteps(t *testing.T) {
+	// 76e6 bits / 380 s / 1000 = 200 kbps total exactly: not under 200, so still stereo.
+	// 189 s gives 402 kbps and 191 s 397
+	cases := []struct {
+		duration        float64
+		audio, channels int
+	}{{379, 64, 2}, {380, 64, 2}, {381, 32, 1}, {189, 96, 2}, {191, 64, 2}}
+	for _, c := range cases {
+		plan, err := PlanEncode(10, c.duration, VideoShape{})
+		if err != nil || plan.AudioKbps != c.audio || plan.Channels != c.channels {
+			t.Errorf("%v s: plan %+v, %v", c.duration, plan, err)
+		}
+	}
+}
+
+func TestEncodePlanPrefersX264(t *testing.T) {
+	if !(EncodePlan{VideoKbps: 1499}).PrefersX264() || (EncodePlan{VideoKbps: 1500}).PrefersX264() {
+		t.Fatal("libx264 must be preferred below 1500 kbps only")
+	}
+}
+
 func TestPlanEncodeTooLong(t *testing.T) {
-	// 76e6 bits / 600 s / 1000 = 126 kbps total, 62 for video after 64 audio: under the floor
-	_, err := PlanEncode(10, 600, 0)
+	// 76e6 bits / 1000 s / 1000 = 76 kbps total, 44 for video after 32 audio: under the floor
+	_, err := PlanEncode(10, 1000, VideoShape{})
 	var tooLong *TooLongError
 	if !errors.As(err, &tooLong) {
 		t.Fatalf("err = %v", err)
@@ -164,20 +214,20 @@ func TestPlanEncodeTooLong(t *testing.T) {
 	if err.Error() != "Too long to fit 10 MB" {
 		t.Fatalf("message %q", err.Error())
 	}
-	// Longest that fits: 76e6 / ((100 + 64) * 1000) = 463.4 s
-	if tooLong.MaxDuration < 463 || tooLong.MaxDuration > 464 {
+	// Longest that fits: 76e6 / ((50 + 32) * 1000) = 926.8 s
+	if tooLong.MaxDuration < 926 || tooLong.MaxDuration > 927 {
 		t.Fatalf("max duration %v", tooLong.MaxDuration)
 	}
-	if tooLong.Detail() != "At 10 MB the longest video that fits is about 7:43; this one is 10:00." {
+	if tooLong.Detail() != "At 10 MB the longest video that fits is about 15:26; this one is 16:40." {
 		t.Fatalf("detail %q", tooLong.Detail())
 	}
-	// And the boundary: 463 s still plans at the floor
-	plan, err := PlanEncode(10, 463, 0)
-	if err != nil || plan.VideoKbps < MinVideoKbps || plan.AudioKbps != 64 {
-		t.Fatalf("plan at the floor = %+v, %v", plan, err)
+	// And the boundary: 926 s still plans at the floor, 10 fps 240p in mono
+	plan, err := PlanEncode(10, 926, VideoShape{})
+	if want := (EncodePlan{VideoKbps: MinVideoKbps, AudioKbps: 32, Channels: 1, Height: 240, FPS: 10}); err != nil || plan != want {
+		t.Fatalf("plan at the floor = %+v, %v; want %+v", plan, err, want)
 	}
 
-	if _, err := PlanEncode(10, 0, 0); !errors.Is(err, ErrUnknownDuration) {
+	if _, err := PlanEncode(10, 0, VideoShape{}); !errors.Is(err, ErrUnknownDuration) {
 		t.Fatalf("zero duration err = %v", err)
 	}
 }
@@ -263,7 +313,7 @@ func TestSelectFitSkipsFormatsWithoutID(t *testing.T) {
 	if _, ok := SelectFit(formats, 0, LimitBytes(100)); ok {
 		t.Fatal("selected a format with no id")
 	}
-	if SourceHeight(formats, 0) != 720 {
-		t.Fatal("id-less format ignored by SourceHeight")
+	if SourceShape(formats, 0).Height != 720 {
+		t.Fatal("id-less format ignored by SourceShape")
 	}
 }

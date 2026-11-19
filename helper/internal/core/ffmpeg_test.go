@@ -178,7 +178,8 @@ func after(args []string, flag string) string {
 func TestEncodeJobPassesX264(t *testing.T) {
 	job := EncodeJob{
 		Ffmpeg: "ffmpeg", Encoder: EncoderX264, Source: "in.source.mp4", Output: "in.sized.mp4",
-		PassLog: "tmp/vidgrab-pass-1", Plan: EncodePlan{VideoKbps: 1170, AudioKbps: 96, Height: 360, CapFPS: true},
+		PassLog: "tmp/vidgrab-pass-1",
+		Plan:    EncodePlan{VideoKbps: 74, AudioKbps: 32, Channels: 1, Height: 360, FPS: 10},
 	}
 	passes := job.Passes()
 	if len(passes) != 2 {
@@ -187,8 +188,9 @@ func TestEncodeJobPassesX264(t *testing.T) {
 	first, second := passes[0], passes[1]
 	for _, args := range passes {
 		if args[0] != "ffmpeg" || after(args, "-i") != "in.source.mp4" || after(args, "-progress") != "pipe:1" ||
-			!slices.Contains(args, "-nostats") || after(args, "-b:v") != "1170k" || after(args, "-maxrate") != "1170k" ||
-			after(args, "-bufsize") != "2340k" || after(args, "-preset") != "medium" || after(args, "-fpsmax") != "30" ||
+			!slices.Contains(args, "-nostats") || after(args, "-b:v") != "74k" || after(args, "-maxrate") != "74k" ||
+			after(args, "-bufsize") != "148k" || after(args, "-preset") != "slower" || after(args, "-fpsmax") != "10" ||
+			slices.Contains(args, "-tune") ||
 			after(args, "-passlogfile") != "tmp/vidgrab-pass-1" || after(args, "-pix_fmt") != "yuv420p" ||
 			!strings.Contains(after(args, "-vf"), "min(360,ih)") {
 			t.Errorf("pass args %v", args)
@@ -197,7 +199,7 @@ func TestEncodeJobPassesX264(t *testing.T) {
 	if after(first, "-pass") != "1" || !slices.Contains(first, "-an") || last(first) != os.DevNull || slices.Contains(first, "in.sized.mp4") {
 		t.Errorf("first pass %v", first)
 	}
-	if after(second, "-pass") != "2" || after(second, "-c:a") != "aac" || after(second, "-b:a") != "96k" ||
+	if after(second, "-pass") != "2" || after(second, "-c:a") != "aac" || after(second, "-b:a") != "32k" || after(second, "-ac") != "1" ||
 		after(second, "-map_metadata") != "0" || after(second, "-movflags") != "+faststart" || last(second) != "in.sized.mp4" ||
 		!strings.Contains(strings.Join(second, " "), "-map 0:v:0 -map 0:a:0?") {
 		t.Errorf("second pass %v", second)
@@ -226,7 +228,7 @@ func TestEncodeJobPassesHardware(t *testing.T) {
 		args := passes[0]
 		if after(args, "-c:v") != c.encoder || after(args, "-rc") != c.rc || after(args, "-pix_fmt") != c.pixFmt ||
 			after(args, "-b:v") != "3000k" || after(args, "-maxrate") != "3000k" || after(args, "-bufsize") != "6000k" ||
-			slices.Contains(args, "-pass") || slices.Contains(args, "-fpsmax") || last(args) != "o.mp4" {
+			slices.Contains(args, "-pass") || slices.Contains(args, "-fpsmax") || after(args, "-ac") != "2" || last(args) != "o.mp4" {
 			t.Errorf("%s args %v", c.encoder, args)
 		}
 		vaapi := c.encoder == "h264_vaapi"
@@ -239,7 +241,7 @@ func TestEncodeJobPassesHardware(t *testing.T) {
 
 func TestEncodeJobPassesVaapiOrder(t *testing.T) {
 	job := EncodeJob{Ffmpeg: "ffmpeg", Encoder: EncoderVaapi, Source: "s.mp4", Output: "o.mp4",
-		Plan: EncodePlan{VideoKbps: 800, AudioKbps: 96, Height: 360, CapFPS: true}}
+		Plan: EncodePlan{VideoKbps: 800, AudioKbps: 96, Channels: 2, Height: 360, FPS: 30}}
 	args := job.Passes()[0]
 	device, input := slices.Index(args, "-vaapi_device"), slices.Index(args, "-i")
 	// The render node is a global option, so it must precede the input it decodes
@@ -252,6 +254,18 @@ func TestEncodeJobPassesVaapiOrder(t *testing.T) {
 	}
 	if after(args, "-c:v") != "h264_vaapi" || after(args, "-b:v") != "800k" || after(args, "-fpsmax") != "30" {
 		t.Fatalf("args %v", args)
+	}
+}
+
+func TestFpsArg(t *testing.T) {
+	cases := []struct {
+		fps  float64
+		want string
+	}{{30, "30"}, {10, "10"}, {25.0 / 3, "8.334"}, {23.976 / 2, "11.988"}, {29.97, "29.97"}}
+	for _, c := range cases {
+		if got := fpsArg(c.fps); got != c.want {
+			t.Errorf("fpsArg(%v) = %q, want %q", c.fps, got, c.want)
+		}
 	}
 }
 
@@ -352,7 +366,8 @@ func TestRealFfmpegFit(t *testing.T) {
 					"-c:v", "libx264", "-preset", "ultrafast", "-b:v", "8M", "-c:a", "aac",
 					"-metadata", "title=Real ffmpeg test", "-shortest", source})
 
-				plan, err := PlanEncode(1, 20, 720)
+				// 1 MB over 20 s: 380 kbps total, 64k stereo, 316 video at up to 15 fps, 480p
+				plan, err := PlanEncode(1, 20, VideoShape{Height: 720, Aspect: 16.0 / 9, FPS: 60})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -402,7 +417,7 @@ func TestRealFfmpegFit(t *testing.T) {
 					dims := strings.TrimSpace(run([]string{ffprobe, "-v", "error", "-select_streams", "v:0",
 						"-show_entries", "stream=width,height,r_frame_rate,codec_name", "-of", "csv=p=0", output}))
 					t.Logf("output stream: %s", dims)
-					want := map[string]string{"landscape": "h264,426,240,30/1", "portrait": "h264,240,426,30/1"}[shape.name]
+					want := map[string]string{"landscape": "h264,854,480,15/1", "portrait": "h264,480,854,15/1"}[shape.name]
 					if dims != want {
 						t.Errorf("stream %q, want %q", dims, want)
 					}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,12 +28,12 @@ func rawInfo(t *testing.T, text string) map[string]any {
 	return raw
 }
 
-// A 30-second clip whose 720p streams (8 MB + 3 MB) are far over 1 MB but whose 240p H.264
-// plus AAC (0.5 MB + 0.4 MB) fit 1 MB as they are.
+// A 30-second clip whose 720p streams (8 MB + 3 MB) are far over 1 MB but whose 480p H.264
+// plus AAC (0.5 MB + 0.4 MB) fit 1 MB as they are, as tall as a 1 MB conversion would be.
 const clipInfo = `{"id": "jNQXAC9IVRw", "title": "Clip", "duration": 30, "formats": [
 	{"format_id": "140", "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "filesize": 400000},
 	{"format_id": "251", "vcodec": "none", "acodec": "opus", "ext": "webm", "filesize": 380000},
-	{"format_id": "133", "vcodec": "avc1.4d4015", "acodec": "none", "ext": "mp4", "width": 426, "height": 240, "filesize": 500000},
+	{"format_id": "135", "vcodec": "avc1.4d401e", "acodec": "none", "ext": "mp4", "width": 854, "height": 480, "filesize": 500000},
 	{"format_id": "136", "vcodec": "avc1.4d401f", "acodec": "none", "ext": "mp4", "width": 1280, "height": 720, "filesize": 8000000}
 ]}`
 
@@ -44,6 +45,17 @@ const bigClipInfo = `{"id": "jNQXAC9IVRw", "title": "Clip", "duration": 30, "for
 
 // overLimit is a downloaded source size over the 1 MB most tests use.
 const overLimit = 2_000_000
+
+// hardwareQueue is sizedQueue for a 10-second clip at a 3 MB limit, whose 2184 kbps of video
+// is enough for the hardware encoder to be used. The 4 MB download is over the limit and
+// carries more than the plan, so CappedToSource leaves it alone.
+func hardwareQueue(t *testing.T, sizes ...int) (*JobQueue, *fakeStarter, *sizedFakes) {
+	t.Helper()
+	info := strings.Replace(bigClipInfo, `"duration": 30`, `"duration": 10`, 1)
+	q, starter, fakes := sizedQueue(t, info, "h264_nvenc", sizes...)
+	fakes.set(func(f *sizedFakes) { f.downloadSize = 4_000_000 })
+	return q, starter, fakes
+}
 
 // sizedFakes plays yt-dlp and ffmpeg for size-limited jobs: yt-dlp writes a downloadSize file
 // at the name its -o template gives and reports codecs, and each final ffmpeg pass writes its
@@ -198,7 +210,7 @@ func TestSizedJobThatFitsDownloadsExactFormats(t *testing.T) {
 		t.Fatalf("expected one yt-dlp run, got %d", len(procs))
 	}
 	args := procs[0].args
-	if procs[0].argAfter("-f") != "133+140" || procs[0].argAfter("--merge-output-format") != "mp4" ||
+	if procs[0].argAfter("-f") != "135+140" || procs[0].argAfter("--merge-output-format") != "mp4" ||
 		slices.Contains(args, "-S") || !slices.Contains(args, "--embed-metadata") || last(args) != watchURL(videos[0]) ||
 		!strings.HasSuffix(procs[0].argAfter("-o"), "."+id[:8]+".source.%(ext)s") {
 		t.Fatalf("args %v", args)
@@ -238,12 +250,12 @@ func TestSizedJobNeverReplacesExistingFiles(t *testing.T) {
 
 func TestSizedJobOversizedFitIsConverted(t *testing.T) {
 	// yt-dlp's sizes said 0.9 MB, but the merged file came out at 2 MB
-	q, starter, fakes := sizedQueue(t, clipInfo, "h264_nvenc", 800_000)
+	q, starter, fakes := sizedQueue(t, clipInfo, "libx264", 800_000)
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
-	if len(procs) != 2 || procs[0].argAfter("-f") != "133+140" || !isFfmpeg(procs[1].args) {
-		t.Fatalf("expected the fit download then one encode, got %d processes", len(procs))
+	if len(procs) != 3 || procs[0].argAfter("-f") != "135+140" || !isFfmpeg(procs[1].args) {
+		t.Fatalf("expected the fit download then one two-pass encode, got %d processes", len(procs))
 	}
 	final, source, sized := clipPaths(fakes.dir, id)
 	if fileSize(t, final) != 800_000 || exists(source) || exists(sized) {
@@ -267,30 +279,30 @@ func TestSizedJobFittingSourceIsNotReencoded(t *testing.T) {
 }
 
 func TestSizedJobSmallVP9SourceIsConvertedAtItsOwnBitrate(t *testing.T) {
-	// 0.6 MB over 30 s is 160 kbps in total, so video is capped at 160 - 64 = 96, then
-	// raised to the 100 kbps floor, instead of the 189 kbps a 1 MB limit would allow
-	q, starter, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 500_000)
-	fakes.set(func(f *sizedFakes) { f.downloadSize, f.codecs = 600_000, "vp09.00.40.08 opus" })
+	// 0.4 MB over 30 s is 106 kbps in total, so video is capped at 106 - 64 = 42, then
+	// raised to the 50 kbps floor, instead of the 189 kbps a 1 MB limit would allow
+	q, starter, fakes := sizedQueue(t, bigClipInfo, "libx264", 300_000)
+	fakes.set(func(f *sizedFakes) { f.downloadSize, f.codecs = 400_000, "vp09.00.40.08 opus" })
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
-	if len(procs) != 2 || procs[1].argAfter("-b:v") != "100k" {
+	if len(procs) != 3 || procs[2].argAfter("-b:v") != "50k" {
 		t.Fatalf("processes %d, encode %v", len(procs), procs[len(procs)-1].args)
 	}
 }
 
 func TestSizedJobConvertsWhenFitIsShorterThanPlan(t *testing.T) {
-	// At 3 MB over 30 s the plan is 664 kbps video at 360p, but the only fit is 240p
-	q, starter, fakes := sizedQueue(t, clipInfo, "h264_nvenc", 2_500_000)
-	fakes.set(func(f *sizedFakes) { f.downloadSize = 4_000_000 })
-	id := create(t, q, watchURL(videos[0]), sizedOptions(3))
+	// At 5 MB over 30 s the plan is 1170 kbps video at 720p, but the only fit is 480p
+	q, starter, fakes := sizedQueue(t, clipInfo, "libx264", 2_500_000)
+	fakes.set(func(f *sizedFakes) { f.downloadSize = 6_000_000 })
+	id := create(t, q, watchURL(videos[0]), sizedOptions(5))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
-	if len(procs) != 2 || procs[0].argAfter("-S") != "res:360,vcodec:h264,acodec:aac" || procs[0].argAfter("-f") != "bv*+ba/b" {
+	if len(procs) != 3 || procs[0].argAfter("-S") != "res:720,vcodec:h264,acodec:aac" || procs[0].argAfter("-f") != "bv*+ba/b" {
 		t.Fatalf("expected a capped source download, got %v", procs[0].args)
 	}
-	if !exists(filepath.Join(fakes.dir, "Clip (3 MB).mp4")) {
-		t.Fatal("no 3 MB file")
+	if !exists(filepath.Join(fakes.dir, "Clip (5 MB).mp4")) {
+		t.Fatal("no 5 MB file")
 	}
 }
 
@@ -304,9 +316,9 @@ func TestSizedJobConvertsAndRetriesSmaller(t *testing.T) {
 	if len(procs) != 5 {
 		t.Fatalf("expected yt-dlp then two 2-pass encodes, got %d processes", len(procs))
 	}
-	// 1 MB over 30 s: 7,600,000 bits / 30 / 1000 = 253 kbps, 64 audio, 189 video, 240p
+	// 1 MB over 30 s: 7,600,000 bits / 30 / 1000 = 253 kbps, 64 audio, 189 video, 480p 10 fps
 	download := procs[0]
-	if isFfmpeg(download.args) || download.argAfter("-S") != "res:240,vcodec:h264,acodec:aac" ||
+	if isFfmpeg(download.args) || download.argAfter("-S") != "res:480,vcodec:h264,acodec:aac" ||
 		download.argAfter("--merge-output-format") != "mp4" || !strings.HasSuffix(download.argAfter("-o"), ".source.%(ext)s") {
 		t.Fatalf("source download args %v", download.args)
 	}
@@ -330,22 +342,56 @@ func TestSizedJobConvertsAndRetriesSmaller(t *testing.T) {
 }
 
 func TestSizedJobHardwareEncodeIsOnePass(t *testing.T) {
-	q, starter, _ := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
-	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
+	q, starter, _ := hardwareQueue(t, 800_000)
+	id := create(t, q, watchURL(videos[0]), sizedOptions(3))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
 	if len(procs) != 2 || procs[1].argAfter("-c:v") != "h264_nvenc" || procs[1].argAfter("-rc") != "cbr" ||
-		slices.Contains(procs[1].args, "-pass") {
+		procs[1].argAfter("-b:v") != "2184k" || slices.Contains(procs[1].args, "-pass") {
 		t.Fatalf("processes %d, encode args %v", len(procs), procs[len(procs)-1].args)
 	}
 }
 
+func TestSizedJobLowBitrateSkipsHardware(t *testing.T) {
+	// 189 kbps of video is under 1500, so libx264 runs without probing for a GPU encoder
+	q, starter, _ := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	var probes atomic.Int32
+	q.encoder = func(context.Context, string) string {
+		probes.Add(1)
+		return "h264_nvenc"
+	}
+	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
+	waitFor(t, func() bool { return status(t, q, id) == "complete" })
+	procs := starter.all()
+	if len(procs) != 3 || procs[1].argAfter("-c:v") != "libx264" || procs[2].argAfter("-pass") != "2" || probes.Load() != 0 {
+		t.Fatalf("processes %d, probes %d, encode args %v", len(procs), probes.Load(), procs[len(procs)-1].args)
+	}
+}
+
+func TestSizedJobRetryUnderHardwareThresholdUsesX264(t *testing.T) {
+	// 3 MB over 14 s: 22,800,000 bits / 14 / 1000 = 1628 kbps, 1532 video on NVENC. That comes
+	// out too big, and the retry at 85% (1302) is under 1500, so it runs on libx264
+	q, starter, fakes := hardwareQueue(t, 3_300_000, 900_000)
+	info := strings.Replace(bigClipInfo, `"duration": 30`, `"duration": 14`, 1)
+	q.videoInfo = func(context.Context, string) (map[string]any, error) { return rawInfo(t, info), nil }
+	id := create(t, q, watchURL(videos[0]), sizedOptions(3))
+	waitFor(t, func() bool { return status(t, q, id) == "complete" })
+	procs := starter.all()
+	if len(procs) != 4 || procs[1].argAfter("-c:v") != "h264_nvenc" || procs[1].argAfter("-b:v") != "1532k" ||
+		procs[2].argAfter("-c:v") != "libx264" || procs[3].argAfter("-b:v") != "1302k" || procs[3].argAfter("-pass") != "2" {
+		t.Fatalf("processes %d", len(procs))
+	}
+	if !exists(filepath.Join(fakes.dir, "Clip (3 MB).mp4")) {
+		t.Fatal("no 3 MB file")
+	}
+}
+
 func TestSizedJobFallsBackToX264WhenHardwareFails(t *testing.T) {
-	q, starter, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	q, starter, fakes := hardwareQueue(t, 800_000)
 	fakes.set(func(f *sizedFakes) {
 		f.failEncoders = map[string]string{"h264_nvenc": "[h264_nvenc @ 0x1] OpenEncodeSessionEx failed: out of memory"}
 	})
-	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
+	id := create(t, q, watchURL(videos[0]), sizedOptions(3))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
 	// yt-dlp, the failed NVENC encode, then libx264's two passes
@@ -355,7 +401,7 @@ func TestSizedJobFallsBackToX264WhenHardwareFails(t *testing.T) {
 	}
 
 	// The next job goes straight to libx264
-	id = create(t, q, watchURL(videos[1]), sizedOptions(1))
+	id = create(t, q, watchURL(videos[1]), sizedOptions(3))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	for _, p := range starter.all()[4:] {
 		if isFfmpeg(p.args) && p.argAfter("-c:v") != "libx264" {
@@ -365,14 +411,14 @@ func TestSizedJobFallsBackToX264WhenHardwareFails(t *testing.T) {
 }
 
 func TestSizedJobWithoutAnyH264Encoder(t *testing.T) {
-	q, _, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	q, _, fakes := hardwareQueue(t, 800_000)
 	fakes.set(func(f *sizedFakes) {
 		f.failEncoders = map[string]string{
 			"h264_nvenc": "[h264_nvenc @ 0x1] Cannot load nvcuda.dll",
 			"libx264":    "[vost#0:0 @ 0x2] Unknown encoder 'libx264'",
 		}
 	})
-	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
+	id := create(t, q, watchURL(videos[0]), sizedOptions(3))
 	waitFor(t, func() bool { return status(t, q, id) == "error" })
 	job := snapshot(t, q, id)
 	if str(job.Error) != "This ffmpeg cannot encode H.264" || !strings.Contains(str(job.Detail), "Unknown encoder 'libx264'") {
@@ -385,7 +431,7 @@ func TestSizedJobWithoutAnyH264Encoder(t *testing.T) {
 }
 
 func TestSizedJobFailsWhenStillTooBig(t *testing.T) {
-	q, _, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 1_100_000, 1_050_000)
+	q, _, fakes := sizedQueue(t, bigClipInfo, "libx264", 1_100_000, 1_050_000)
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "error" })
 	job := snapshot(t, q, id)
@@ -414,7 +460,7 @@ func TestSizedJobFailsWhenStillTooBig(t *testing.T) {
 func TestSizedJobFailureRemovesWorkingFiles(t *testing.T) {
 	// yt-dlp reporting a path that does not exist (a mangled non-ASCII title) fails the job
 	// after the download is on disk; the working file must not be left in the folder
-	q, _, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	q, _, fakes := sizedQueue(t, bigClipInfo, "libx264", 800_000)
 	fakes.set(func(f *sizedFakes) { f.reportPath = filepath.Join(f.dir, "Mangled.mp4") })
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "error" })
@@ -426,7 +472,7 @@ func TestSizedJobFailureRemovesWorkingFiles(t *testing.T) {
 }
 
 func TestSizedJobKeepsEncodeWhenFinalRenameFails(t *testing.T) {
-	q, _, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	q, _, fakes := sizedQueue(t, bigClipInfo, "libx264", 800_000)
 	var mu sync.Mutex
 	tries := 0
 	q.rename = func(string, string) error {
@@ -451,7 +497,7 @@ func TestSizedJobKeepsEncodeWhenFinalRenameFails(t *testing.T) {
 }
 
 func TestSizedJobRetriesALockedRename(t *testing.T) {
-	q, _, fakes := sizedQueue(t, bigClipInfo, "h264_nvenc", 800_000)
+	q, _, fakes := sizedQueue(t, bigClipInfo, "libx264", 800_000)
 	var mu sync.Mutex
 	tries := 0
 	q.rename = func(from, to string) error {
@@ -497,9 +543,9 @@ func TestSizedJobTooLong(t *testing.T) {
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "error" })
 	job := snapshot(t, q, id)
-	// 7,600,000 bits / ((100 + 64) * 1000) = 46 s
+	// 7,600,000 bits / ((50 + 32) * 1000) = 92.7 s
 	if str(job.Error) != "Too long to fit 1 MB" ||
-		str(job.Detail) != "At 1 MB the longest video that fits is about 0:46; this one is 1:00:00." {
+		str(job.Detail) != "At 1 MB the longest video that fits is about 1:32; this one is 1:00:00." {
 		t.Fatalf("error %q detail %q", str(job.Error), str(job.Detail))
 	}
 	if starter.count() != 0 {

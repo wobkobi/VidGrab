@@ -25,24 +25,91 @@ const (
 	// catches the rest.
 	encodeHeadroom = 0.95
 
-	// AudioKbps is the AAC bitrate of a re-encode; lowAudioKbps replaces it when the whole
-	// budget is under lowAudioBelowKbps, where every audio kbit is worth more as video.
-	AudioKbps         = 96
-	lowAudioKbps      = 64
-	lowAudioBelowKbps = 400
-	// MinVideoKbps is the floor below which H.264 turns to mush even at 240p; a video that
-	// would get less is refused rather than encoded into something unwatchable.
-	MinVideoKbps = 100
+	// AudioKbps is the stereo AAC bitrate of a re-encode. Below lowAudioBelowKbps in total it
+	// drops to lowAudioKbps stereo, and below monoAudioBelowKbps to monoAudioKbps mono, where
+	// every audio kbit is worth more as video: at ~107 kbps total, 32k mono instead of 64k
+	// stereo was part of lifting a screen recording from VMAF ~1 to 27-45.
+	AudioKbps          = 96
+	lowAudioKbps       = 64
+	lowAudioBelowKbps  = 400
+	monoAudioKbps      = 32
+	monoAudioBelowKbps = 200
+	// MinVideoKbps is the floor below which a video is refused rather than encoded into
+	// something unwatchable. 50 kbps still gives a readable 10 fps 144p-240p picture.
+	MinVideoKbps = 50
+
+	// minBitsPerPixel is the least video bits per pixel per frame the output height may get.
+	// Measured with VMAF against a 1080p source: at ~75 kbps a music video peaked at 360p10
+	// (0.032) and fell at 480p10 (0.018), while a static screen recording still gained a
+	// little at 480p10, so the threshold follows motion. At 770 kbps 720p24 (0.035) stayed
+	// close to 480p24 while 1080p24 (0.015) fell well behind.
+	minBitsPerPixel = 0.032
+	// defaultAspect is the frame's longer side over its shorter side when yt-dlp does not say.
+	defaultAspect = 16.0 / 9
+
+	// HardwareMinKbps is the video bitrate below which libx264 is used even when a hardware
+	// encoder works: at ~75 kbps two-pass x264 scored VMAF 1.3 where NVENC CBR scored 0.4 at
+	// the same 144p30, and x264 keeps a clear lead until bitrates are comfortable.
+	HardwareMinKbps = 1500
 )
 
-// encodeHeights maps a video bitrate (kbps) to the tallest output that still looks clean at it,
-// highest first. The steps follow common streaming ladders for H.264.
-var encodeHeights = []struct{ minKbps, height int }{
-	{4500, 1080},
-	{2500, 720},
-	{1200, 480},
-	{600, 360},
-	{0, 240},
+// encodeHeights are the output heights (shorter side) a re-encode picks from, tallest first.
+var encodeHeights = []int{1080, 720, 480, 360, 240, 144}
+
+// maxFPS returns the frame rate ceiling for videoKbps of video. At tiny bitrates fewer frames
+// leave more bits for each one: at ~75 kbps 240p15 and 360p10 scored VMAF 12-41 where 144p30
+// scored about 1. Once the bitrate is not tiny smoothness matters again: at 770 kbps 720p15
+// scored 52 against 73 for 720p24.
+func maxFPS(videoKbps int) float64 {
+	switch {
+	case videoKbps < 200:
+		return 10
+	case videoKbps < 400:
+		return 15
+	}
+	return 30
+}
+
+// frameRate returns the output frame rate for videoKbps of video from a source at sourceFPS
+// (0 when unknown): the source's own rate when it is within maxFPS, else every k-th source
+// frame when that lands within 20% of the ceiling (60 > 30, 50 > 25, 24 > 12), which plays
+// evenly, else the ceiling itself.
+func frameRate(videoKbps int, sourceFPS float64) float64 {
+	ceiling := maxFPS(videoKbps)
+	if !(sourceFPS > 0) {
+		return ceiling
+	}
+	if sourceFPS <= ceiling {
+		return sourceFPS
+	}
+	if even := sourceFPS / math.Ceil(sourceFPS/ceiling); even >= ceiling*0.8 {
+		return even
+	}
+	return ceiling
+}
+
+// encodeHeight returns the tallest of encodeHeights, clamped to maxHeight (0 means no cap),
+// whose frames get at least minBitsPerPixel at videoKbps and fps, or the shortest when none
+// does. aspect is the longer side over the shorter (defaultAspect when unknown); the height is
+// the shorter side, so a portrait frame counts the same pixels as its landscape twin.
+func encodeHeight(videoKbps int, fps, aspect float64, maxHeight int) int {
+	if !(aspect >= 1) {
+		aspect = defaultAspect
+	}
+	clamp := func(h int) int {
+		if maxHeight > 0 {
+			return min(h, maxHeight)
+		}
+		return h
+	}
+	for _, h := range encodeHeights {
+		h = clamp(h)
+		pixels := float64(h) * float64(h) * aspect
+		if float64(videoKbps)*1000/(pixels*fps) >= minBitsPerPixel {
+			return h
+		}
+	}
+	return clamp(encodeHeights[len(encodeHeights)-1])
 }
 
 // LimitBytes returns the byte limit for a MaxSizeMB value.
@@ -57,6 +124,10 @@ type FitFormat struct {
 	Ext    string
 	// Height is the shorter side of the frame, the measure yt-dlp's -S res sorts by.
 	Height int
+	// Aspect is the longer side over the shorter, 0 when yt-dlp gives no width.
+	Aspect float64
+	// FPS is the frame rate, 0 when unknown.
+	FPS float64
 	// Size is filesize, else filesize_approx, in bytes; 0 when yt-dlp knows neither.
 	Size float64
 	// Audio is yt-dlp's own preference for the audio stream; zero for video-only formats.
@@ -141,7 +212,7 @@ func normaliseAudioCodec(acodec string) string {
 
 // FitFormats reads the formats list of full (not flat) yt-dlp JSON. Formats with neither a
 // video nor an audio stream (storyboards) are dropped. A format without an id is kept for
-// SourceHeight but never selected.
+// SourceShape but never selected.
 func FitFormats(raw map[string]any) []FitFormat {
 	list, _ := raw["formats"].([]any)
 	var formats []FitFormat
@@ -159,9 +230,13 @@ func FitFormats(raw map[string]any) []FitFormat {
 			format.VCodec = normaliseCodec(vcodec)
 			if height, ok := asInt(f["height"]); ok && height > 0 {
 				if width, ok := asInt(f["width"]); ok && width > 0 {
+					format.Aspect = float64(max(width, height)) / float64(min(width, height))
 					height = min(width, height)
 				}
 				format.Height = height
+			}
+			if fps, ok := asNumber(f["fps"]); ok && fps > 0 {
+				format.FPS = fps
 			}
 		}
 		if acodec != "" && acodec != "none" {
@@ -269,16 +344,33 @@ func betterFit(a, b FitChoice) bool {
 	return a.Size > b.Size
 }
 
-// SourceHeight returns the tallest video stream at most maxHeight (0 means no cap), or 0 when
-// no format reports a height in range.
-func SourceHeight(formats []FitFormat, maxHeight int) int {
-	tallest := 0
+// VideoShape is what PlanEncode needs to know about the source video; zero fields are
+// unknown.
+type VideoShape struct {
+	// Height is the shorter side of the frame.
+	Height int
+	// Aspect is the longer side over the shorter.
+	Aspect float64
+	FPS    float64
+}
+
+// SourceShape describes the source a re-encode starts from, looking only at video streams at
+// most maxHeight tall (0 means no cap): the tallest height, the aspect of the tallest stream
+// that reports one, and the highest frame rate. Fields no format reports stay 0.
+func SourceShape(formats []FitFormat, maxHeight int) VideoShape {
+	var shape VideoShape
+	aspectHeight := 0
 	for _, f := range formats {
-		if f.VCodec != "" && (maxHeight == 0 || f.Height <= maxHeight) {
-			tallest = max(tallest, f.Height)
+		if f.VCodec == "" || (maxHeight > 0 && f.Height > maxHeight) {
+			continue
+		}
+		shape.Height = max(shape.Height, f.Height)
+		shape.FPS = max(shape.FPS, f.FPS)
+		if f.Aspect > 0 && f.Height > aspectHeight {
+			shape.Aspect, aspectHeight = f.Aspect, f.Height
 		}
 	}
-	return tallest
+	return shape
 }
 
 // EncodePlan is how a video that does not fit is re-encoded.
@@ -286,12 +378,17 @@ type EncodePlan struct {
 	// VideoKbps and AudioKbps are the target bitrates in kilobits (1000 bits) per second.
 	VideoKbps int
 	AudioKbps int
+	// Channels is the audio channel count: 1 at the lowest bitrates, else 2.
+	Channels int
 	// Height is the output's shorter side.
 	Height int
-	// CapFPS limits the frame rate to 30, which below 720p buys more per-frame quality than
-	// smoothness is worth.
-	CapFPS bool
+	// FPS is the most frames per second the output keeps; a slower source keeps its own rate.
+	FPS float64
 }
+
+// PrefersX264 reports whether the plan's video bitrate is under HardwareMinKbps, where
+// two-pass libx264 beats any hardware encoder.
+func (p EncodePlan) PrefersX264() bool { return p.VideoKbps < HardwareMinKbps }
 
 // Scaled returns the plan with the video bitrate multiplied by factor (for the retry after
 // an encode came out too big).
@@ -334,22 +431,28 @@ func (e *TooLongError) Detail() string {
 		e.LimitMB, FormatEta(e.MaxDuration), FormatEta(e.Duration))
 }
 
-// PlanEncode works out the bitrates and output height for re-encoding a video of duration
-// seconds into limitMB megabytes. maxHeight is the tallest source available within the job's
-// quality cap (0 when unknown); the output never goes above it.
+// PlanEncode works out the bitrates, frame rate and output height for re-encoding a video of
+// duration seconds into limitMB megabytes. source.Height is the tallest source available
+// within the job's quality cap (0 when unknown); the output never goes above it, nor above
+// source.FPS when that is known.
 //
-// The budget is total_kbps = limit bits * 0.95 / duration / 1000. Audio takes 96 kbps (64 when
-// the total is under 400 kbps) and video gets the rest. When that leaves video under
+// The budget is total_kbps = limit bits * 0.95 / duration / 1000. Audio takes 96 kbps stereo,
+// 64 stereo when the total is under 400 kbps, or 32 mono under 200, and video gets the rest.
+// The frame rate follows the video bitrate (see frameRate), then the height is the tallest
+// that keeps minBitsPerPixel at that rate (see encodeHeight). When video would get under
 // MinVideoKbps the error is a *TooLongError whose MaxDuration is the length that would just
-// reach the floor: limit bits * 0.95 / ((MinVideoKbps + 64) * 1000).
-func PlanEncode(limitMB int, duration float64, maxHeight int) (EncodePlan, error) {
+// reach the floor with the smallest audio: limit bits * 0.95 / ((MinVideoKbps + 32) * 1000).
+func PlanEncode(limitMB int, duration float64, source VideoShape) (EncodePlan, error) {
 	if !(duration > 0) || math.IsInf(duration, 0) {
 		return EncodePlan{}, ErrUnknownDuration
 	}
 	bits := float64(LimitBytes(limitMB)) * 8 * encodeHeadroom
 	totalKbps := bits / duration / 1000
-	audio := AudioKbps
-	if totalKbps < lowAudioBelowKbps {
+	audio, channels := AudioKbps, 2
+	switch {
+	case totalKbps < monoAudioBelowKbps:
+		audio, channels = monoAudioKbps, 1
+	case totalKbps < lowAudioBelowKbps:
 		audio = lowAudioKbps
 	}
 	video := int(math.Floor(totalKbps)) - audio
@@ -357,18 +460,12 @@ func PlanEncode(limitMB int, duration float64, maxHeight int) (EncodePlan, error
 		return EncodePlan{}, &TooLongError{
 			LimitMB:     limitMB,
 			Duration:    duration,
-			MaxDuration: bits / float64((MinVideoKbps+lowAudioKbps)*1000),
+			MaxDuration: bits / float64((MinVideoKbps+monoAudioKbps)*1000),
 		}
 	}
-	height := 240
-	for _, step := range encodeHeights {
-		if video >= step.minKbps {
-			height = step.height
-			break
-		}
-	}
-	if maxHeight > 0 {
-		height = min(height, maxHeight)
-	}
-	return EncodePlan{VideoKbps: video, AudioKbps: audio, Height: height, CapFPS: height < 720}, nil
+	fps := frameRate(video, source.FPS)
+	return EncodePlan{
+		VideoKbps: video, AudioKbps: audio, Channels: channels,
+		Height: encodeHeight(video, fps, source.Aspect, source.Height), FPS: fps,
+	}, nil
 }

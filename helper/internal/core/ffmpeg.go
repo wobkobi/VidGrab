@@ -158,7 +158,9 @@ func deviceArgs(encoder string) []string {
 //
 // maxrate equals the target and bufsize is two seconds of it, which keeps the rate tight
 // enough that the output size tracks the target closely. Hardware encoders run one pass, so
-// they are told to hold a constant bitrate; libx264's two passes spread bits where they help.
+// they are told to hold a constant bitrate; libx264's two passes spread bits where they help,
+// and preset slower is worth its time because libx264 only runs at low bitrates (see
+// HardwareMinKbps), where every bit counts.
 // QSV wants NV12 input and VA-API takes the uploaded surface as it is; the others take plain
 // 4:2:0, which also turns 10-bit HDR sources into the 8-bit stream every player handles.
 func videoCodecArgs(encoder string, kbps int) []string {
@@ -171,7 +173,7 @@ func videoCodecArgs(encoder string, kbps int) []string {
 	case EncoderVaapi:
 		args = append(args, "-rc_mode", "CBR")
 	case EncoderX264:
-		args = append(args, "-preset", "medium")
+		args = append(args, "-preset", "slower")
 	}
 	args = append(args, "-b:v", rate, "-maxrate", rate, "-bufsize", buffer)
 	switch encoder {
@@ -203,6 +205,15 @@ func scaleFilter(height int) string {
 	return fmt.Sprintf("scale='if(gte(iw,ih),-2,trunc(min(%[1]s,iw)/2)*2)':'if(gte(iw,ih),trunc(min(%[1]s,ih)/2)*2,-2)'", h)
 }
 
+// fpsArg formats a plan's frame rate for -fpsmax, which lowers only sources faster than it (a
+// plain -r would duplicate frames of a slower source, and the downloaded stream can be slower
+// than the one the plan was made from). The value is rounded up to 3 decimal places, so a
+// 23.976 source halved to 11.988011 is not clamped a hair below that even rate; the 1e-6
+// keeps float error from rounding an exact 29.97 up to 29.971.
+func fpsArg(fps float64) string {
+	return strconv.FormatFloat(math.Ceil(fps*1000-1e-6)/1000, 'f', -1, 64)
+}
+
 // Passes returns the ffmpeg command for each pass: two for libx264 (an analysis pass with no
 // output, then the real encode) and one for a hardware encoder.
 //
@@ -224,15 +235,17 @@ func (e EncodeJob) Passes() [][]string {
 		filter += "," + vaapiUpload
 	}
 	video := []string{"-vf", filter}
-	if e.Plan.CapFPS {
-		// -fpsmax lowers only sources above 30 fps; a plain -r 30 would duplicate frames of
-		// a 24 fps film
-		video = append(video, "-fpsmax", "30")
+	if e.Plan.FPS > 0 {
+		video = append(video, "-fpsmax", fpsArg(e.Plan.FPS))
 	}
 	video = append(video, videoCodecArgs(e.Encoder, e.Plan.VideoKbps)...)
 	final := append([]string{"-map", "0:v:0", "-map", "0:a:0?"}, video...)
+	channels := e.Plan.Channels
+	if channels <= 0 {
+		channels = 2
+	}
 	tail := []string{
-		"-c:a", "aac", "-b:a", strconv.Itoa(e.Plan.AudioKbps) + "k", "-ac", "2",
+		"-c:a", "aac", "-b:a", strconv.Itoa(e.Plan.AudioKbps) + "k", "-ac", strconv.Itoa(channels),
 		"-map_metadata", "0", "-movflags", "+faststart", "-f", "mp4", e.Output,
 	}
 
