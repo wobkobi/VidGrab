@@ -306,8 +306,22 @@ func TestSizedJobConvertsWhenFitIsShorterThanPlan(t *testing.T) {
 	}
 }
 
+func TestSizedJobReplansForMonoSource(t *testing.T) {
+	// 1 MB over 30 s: 253 kbps total, planned as 64k stereo and 189 video. The download turns
+	// out to have mono sound, so it stays mono at max(32, 64/2) = 32k and video gets 221
+	q, starter, fakes := sizedQueue(t, bigClipInfo, "libx264", 900_000)
+	fakes.set(func(f *sizedFakes) { f.codecs = "avc1.4d401f mp4a.40.2 128 1" })
+	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
+	waitFor(t, func() bool { return status(t, q, id) == "complete" })
+	procs := starter.all()
+	if len(procs) != 3 || procs[1].argAfter("-b:v") != "221k" || procs[2].argAfter("-b:a") != "32k" || procs[2].argAfter("-ac") != "1" {
+		t.Fatalf("processes %d, final pass %v", len(procs), procs[len(procs)-1].args)
+	}
+}
+
 func TestSizedJobConvertsAndRetriesSmaller(t *testing.T) {
-	// The first encode comes out at 1.2 MB, over the 1 MB limit; the retry at 85% fits
+	// The first encode comes out at 1.2 MB, over the 1 MB limit; the retry takes the overshoot
+	// against 0.97 MB off the video, (1.2e6 - 0.97e6) * 8 / 1000 / 30 = 61 kbps, and fits
 	q, starter, fakes := sizedQueue(t, bigClipInfo, "libx264", 1_200_000, 900_000)
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
@@ -322,7 +336,7 @@ func TestSizedJobConvertsAndRetriesSmaller(t *testing.T) {
 		download.argAfter("--merge-output-format") != "mp4" || !strings.HasSuffix(download.argAfter("-o"), ".source.%(ext)s") {
 		t.Fatalf("source download args %v", download.args)
 	}
-	wantRates := []string{"189k", "189k", "160k", "160k"}
+	wantRates := []string{"189k", "189k", "127k", "127k"}
 	for i, p := range procs[1:] {
 		if !isFfmpeg(p.args) || p.argAfter("-b:v") != wantRates[i] || p.argAfter("-c:v") != "libx264" {
 			t.Fatalf("encode %d args %v", i, p.args)
@@ -370,7 +384,8 @@ func TestSizedJobLowBitrateSkipsHardware(t *testing.T) {
 
 func TestSizedJobRetryUnderHardwareThresholdUsesX264(t *testing.T) {
 	// 3 MB over 14 s: 22,800,000 bits / 14 / 1000 = 1628 kbps, 1532 video on NVENC. That comes
-	// out too big, and the retry at 85% (1302) is under 1500, so it runs on libx264
+	// out at 3.3 MB, so the retry takes (3.3e6 - 2.91e6) * 8 / 1000 / 14 = 222 kbps off, and
+	// 1309 is under 1500, so it runs on libx264
 	q, starter, fakes := hardwareQueue(t, 3_300_000, 900_000)
 	info := strings.Replace(bigClipInfo, `"duration": 30`, `"duration": 14`, 1)
 	q.videoInfo = func(context.Context, string) (map[string]any, error) { return rawInfo(t, info), nil }
@@ -378,7 +393,7 @@ func TestSizedJobRetryUnderHardwareThresholdUsesX264(t *testing.T) {
 	waitFor(t, func() bool { return status(t, q, id) == "complete" })
 	procs := starter.all()
 	if len(procs) != 4 || procs[1].argAfter("-c:v") != "h264_nvenc" || procs[1].argAfter("-b:v") != "1532k" ||
-		procs[2].argAfter("-c:v") != "libx264" || procs[3].argAfter("-b:v") != "1302k" || procs[3].argAfter("-pass") != "2" {
+		procs[2].argAfter("-c:v") != "libx264" || procs[3].argAfter("-b:v") != "1309k" || procs[3].argAfter("-pass") != "2" {
 		t.Fatalf("processes %d", len(procs))
 	}
 	if !exists(filepath.Join(fakes.dir, "Clip (3 MB).mp4")) {
@@ -435,7 +450,7 @@ func TestSizedJobFailsWhenStillTooBig(t *testing.T) {
 	id := create(t, q, watchURL(videos[0]), sizedOptions(1))
 	waitFor(t, func() bool { return status(t, q, id) == "error" })
 	job := snapshot(t, q, id)
-	if str(job.Error) != "Could not fit 1 MB" || str(job.Detail) != "The converted video came out at 1.10 MB, then 1.05 MB, over the 1 MB limit." {
+	if str(job.Error) != "Could not fit 1 MB" || str(job.Detail) != "The converted video came out at 1.10 MB, then 1.05 MB, then 1.05 MB, over the 1 MB limit." {
 		t.Fatalf("error %q detail %q", str(job.Error), str(job.Detail))
 	}
 	if job.Filepath != nil || job.Filename != nil {

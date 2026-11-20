@@ -1,5 +1,6 @@
 // ffmpeg re-encoding for size-limited jobs: picking an H.264 encoder that actually works on
-// this machine, building the encode commands and parsing -progress output.
+// this machine (or SVT-AV1 for AV1), building the encode commands and parsing -progress
+// output.
 
 package core
 
@@ -17,6 +18,11 @@ import (
 
 // EncoderX264 is the software H.264 encoder, used when no hardware encoder passes the probe.
 const EncoderX264 = "libx264"
+
+// EncoderSvtAV1 is the software AV1 encoder used for every AV1 conversion: at the low
+// bitrates size limits mean, it beats the hardware AV1 encoders the way libx264 beats
+// hardware H.264.
+const EncoderSvtAV1 = "libsvtav1"
 
 // EncoderVaapi is the Linux VA-API H.264 encoder (AMD and Intel GPUs).
 const EncoderVaapi = "h264_vaapi"
@@ -134,7 +140,7 @@ func (p *EncoderProbe) works(ctx context.Context, ffmpeg, encoder string) bool {
 	if encoder == EncoderVaapi {
 		argv = append(argv, "-vf", vaapiUpload)
 	}
-	argv = append(argv, videoCodecArgs(encoder, 500)...)
+	argv = append(argv, videoCodecArgs(encoder, 500, 144, 0)...)
 	argv = append(argv, "-f", "null", "-")
 	_, _, code, err := p.run(ctx, argv)
 	return err == nil && code == 0
@@ -154,7 +160,34 @@ func deviceArgs(encoder string) []string {
 	return nil
 }
 
-// videoCodecArgs returns the encoder and rate-control options for kbps of video.
+// svtLongSeconds is the output length from which SVT-AV1 always runs preset 8: at 360p15
+// preset 5 scored 2.4-2.5 VMAF over preset 8 but took 3 times as long, which is worth it for a
+// short clip and not for a 30-minute video (preset 5 took 9 minutes for 30 minutes of 178p).
+const svtLongSeconds = 20 * 60
+
+// svtPreset returns the SVT-AV1 speed preset for an output height and length in seconds (0
+// when unknown; lower presets are slower and better). At 360p preset 5 scored about 2 VMAF
+// over preset 8 at 3 times the time; taller outputs come with comfortable bitrates where the
+// faster presets lose little, and a 1080p encode at preset 5 would take longer than the video
+// plays. Outputs of svtLongSeconds or more get preset 8 at any height.
+func svtPreset(height int, seconds float64) string {
+	switch {
+	case seconds >= svtLongSeconds:
+		return "8"
+	case height <= 480:
+		return "5"
+	case height <= 720:
+		return "7"
+	}
+	return "8"
+}
+
+// videoCodecArgs returns the encoder and rate-control options for kbps of video at height,
+// seconds long (0 when unknown).
+//
+// SVT-AV1 runs one pass in its default variable-bitrate mode, aimed at the target with no
+// maxrate (it only honours one in capped-CRF mode); the size check afterwards catches an
+// overshoot. Everything below is about the H.264 encoders.
 //
 // maxrate equals the target and bufsize is two seconds of it, which keeps the rate tight
 // enough that the output size tracks the target closely. Hardware encoders run one pass, so
@@ -163,10 +196,13 @@ func deviceArgs(encoder string) []string {
 // HardwareMinKbps), where every bit counts.
 // QSV wants NV12 input and VA-API takes the uploaded surface as it is; the others take plain
 // 4:2:0, which also turns 10-bit HDR sources into the 8-bit stream every player handles.
-func videoCodecArgs(encoder string, kbps int) []string {
+func videoCodecArgs(encoder string, kbps, height int, seconds float64) []string {
 	rate := strconv.Itoa(kbps) + "k"
 	buffer := strconv.Itoa(kbps*2) + "k"
 	args := []string{"-c:v", encoder}
+	if encoder == EncoderSvtAV1 {
+		return append(args, "-preset", svtPreset(height, seconds), "-b:v", rate, "-pix_fmt", "yuv420p")
+	}
 	switch encoder {
 	case "h264_nvenc", "h264_amf":
 		args = append(args, "-rc", "cbr")
@@ -194,6 +230,8 @@ type EncodeJob struct {
 	// PassLog is the -passlogfile prefix for libx264's two passes.
 	PassLog string
 	Plan    EncodePlan
+	// Seconds is the output's length, 0 when unknown; long outputs get a faster AV1 preset.
+	Seconds float64
 }
 
 // scaleFilter sizes the shorter side to height without upscaling, so portrait Shorts get the
@@ -215,7 +253,7 @@ func fpsArg(fps float64) string {
 }
 
 // Passes returns the ffmpeg command for each pass: two for libx264 (an analysis pass with no
-// output, then the real encode) and one for a hardware encoder.
+// output, then the real encode) and one for SVT-AV1 or a hardware encoder.
 //
 // Every pass reports progress as key=value lines on stdout (-progress pipe:1) and logs only
 // errors, so FfmpegProgress can tell the two apart. The final pass maps the first video and
@@ -238,16 +276,17 @@ func (e EncodeJob) Passes() [][]string {
 	if e.Plan.FPS > 0 {
 		video = append(video, "-fpsmax", fpsArg(e.Plan.FPS))
 	}
-	video = append(video, videoCodecArgs(e.Encoder, e.Plan.VideoKbps)...)
+	video = append(video, videoCodecArgs(e.Encoder, e.Plan.VideoKbps, e.Plan.Height, e.Seconds)...)
 	final := append([]string{"-map", "0:v:0", "-map", "0:a:0?"}, video...)
 	channels := e.Plan.Channels
 	if channels <= 0 {
 		channels = 2
 	}
-	tail := []string{
-		"-c:a", "aac", "-b:a", strconv.Itoa(e.Plan.AudioKbps) + "k", "-ac", strconv.Itoa(channels),
-		"-map_metadata", "0", "-movflags", "+faststart", "-f", "mp4", e.Output,
+	audio := []string{"-c:a", "aac", "-b:a", strconv.Itoa(e.Plan.AudioKbps) + "k", "-ac", strconv.Itoa(channels)}
+	if e.Plan.AudioKbps <= 0 {
+		audio = []string{"-an"}
 	}
+	tail := append(audio, "-map_metadata", "0", "-movflags", "+faststart", "-f", "mp4", e.Output)
 
 	if e.Encoder != EncoderX264 {
 		args := append(head(), final...)
@@ -366,4 +405,45 @@ func (p *FfmpegProgress) update(end bool) *ParseUpdate {
 func (p *FfmpegProgress) NextPass() {
 	p.Pass++
 	p.outTime, p.speed, p.text = 0, 0, ""
+}
+
+// mp4AudioCodecs are the audio codecs (yt-dlp's names, matched as prefixes) an MP4 carries
+// that players handle well. Opus, Vorbis, FLAC and PCM also mux into MP4 but many players
+// will not play them there. Refract uses the same table.
+var mp4AudioCodecs = []string{"mp4a", "aac", "mp3", "ac-3", "ac3", "ec-3", "eac3", "alac"}
+
+// MP4AudioNeedsFix reports whether an MP4 whose sound yt-dlp names acodec should have it
+// re-encoded. No sound ("none") and an unknown codec ("" or "NA") are left alone.
+func MP4AudioNeedsFix(acodec string) bool {
+	codec := strings.ToLower(strings.TrimSpace(acodec))
+	if codec == "" || codec == "none" || codec == "na" {
+		return false
+	}
+	for _, ok := range mp4AudioCodecs {
+		if strings.HasPrefix(codec, ok) {
+			return false
+		}
+	}
+	return true
+}
+
+// FixAudioKbps is the AAC bitrate the sound is re-encoded at when it has to be: 128k mono,
+// 160k stereo (or unknown), 64k a channel for surround up to 512k. Sound outside the size
+// tools is kept generous, since it is a small part of a video's size.
+func FixAudioKbps(channels int) int {
+	switch {
+	case channels == 1:
+		return 128
+	case channels <= 2:
+		return 160
+	}
+	return min(512, 64*channels)
+}
+
+// MP4AudioFixArgs returns the ffmpeg command that copies source to output with every stream
+// kept as it is except the sound, which becomes AAC at FixAudioKbps(channels).
+func MP4AudioFixArgs(ffmpeg, source, output string, channels int) []string {
+	return []string{ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", source,
+		"-map", "0", "-c", "copy", "-c:a", "aac", "-b:a", strconv.Itoa(FixAudioKbps(channels)) + "k",
+		"-map_metadata", "0", "-movflags", "+faststart", "-f", "mp4", output}
 }

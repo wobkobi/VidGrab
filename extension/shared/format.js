@@ -72,6 +72,37 @@ YTDL.format = (function () {
   }
 
   /**
+   * Parse a clip time typed as seconds ("90"), "m:ss" ("1:30") or "h:mm:ss" ("1:02:05").
+   * Fractions of a second are dropped, since the backend cuts on whole seconds.
+   * @param {unknown} str - User input.
+   * @returns {number|null} Whole seconds, null when empty or invalid.
+   */
+  function parseTime(str) {
+    if (typeof str !== "string") return null;
+    const compact = str.replace(/\s+/g, "");
+    if (!compact) return null;
+    // Only the first part may exceed 59, so "90" and "90:00" both read naturally
+    const match = /^(\d+)(?::(\d{1,2}))?(?::(\d{1,2}))?(?:\.\d*)?$/.exec(compact);
+    if (!match) return null;
+    const parts = match.slice(1).filter((part) => part !== undefined).map(Number);
+    if (parts.slice(1).some((n) => n > 59)) return null;
+    return parts.reduce((total, n) => total * 60 + n, 0);
+  }
+
+  /**
+   * Format whole seconds as "m:ss" or "h:mm:ss", the form {@link parseTime} reads back.
+   * @param {number} seconds - Time in seconds; fractions are dropped.
+   * @returns {string} Formatted time.
+   */
+  function clock(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor(total / 60) % 60;
+    const s = String(total % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+  }
+
+  /**
    * Map a job status to its display label.
    * @param {string} status - Backend job status.
    * @returns {string} Human-readable label.
@@ -136,7 +167,7 @@ YTDL.format = (function () {
     return {state: "installing", text: Number.isFinite(pct) ? `${label}... ${percent(pct)}` : `${label}...`};
   }
 
-  return {bytes, eta, percent, parseRange, statusLabel, isConverting, convertingLabel, convertingMeta, setupStatus};
+  return {bytes, eta, percent, parseRange, parseTime, clock, statusLabel, isConverting, convertingLabel, convertingMeta, setupStatus};
 })();
 
 if (typeof module !== "undefined") module.exports = YTDL.format;

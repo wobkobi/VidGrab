@@ -33,6 +33,27 @@ const (
 // queue moves the finished file to "Title.ext" afterwards (see StripID).
 const OutputTemplate = "%(title)s [%(id)s].%(ext)s"
 
+// outputTemplate returns OutputTemplate with a clip's label after the title, "Title
+// (1m30s-4m05s) [id].ext", so a clip never collides with (or is skipped as "already
+// downloaded" because of) the whole video or another clip of it.
+func outputTemplate(opts JobOptions) string {
+	return "%(title)s" + opts.ClipLabel() + " [%(id)s].%(ext)s"
+}
+
+// clipArgs returns the flags that cut a clip, or nil for the whole video. yt-dlp then fetches
+// only that range through ffmpeg; --force-keyframes-at-cuts re-encodes the cut so it starts on
+// the exact second rather than the keyframe before it, which can be several seconds early.
+func clipArgs(opts JobOptions) []string {
+	if !opts.Clipped() {
+		return nil
+	}
+	end := "inf"
+	if opts.ClipEnd > 0 {
+		end = strconv.Itoa(opts.ClipEnd)
+	}
+	return []string{"--download-sections", "*" + strconv.Itoa(opts.ClipStart) + "-" + end, "--force-keyframes-at-cuts"}
+}
+
 // StripID returns base, a file path without its extension, minus the " [id]" that
 // OutputTemplate and WorkTemplate put after the title, and whether that marker was there. Only
 // the last " [id]" is removed, so a title with brackets of its own (even its own id in them)
@@ -81,6 +102,9 @@ var (
 	// A resumed merge download prints this instead of a Destination line for a finished stream
 	alreadyDownloadedRe = regexp.MustCompile(`^\[download\] (.+) has already been downloaded`)
 	mergerRe            = regexp.MustCompile(`^\[Merger\] Merging formats into "(.+)"$`)
+	// ffmpeg's status line while yt-dlp cuts a clip ("frame=  284 fps=175 ... time=00:00:13.63
+	// bitrate=..."; audio-only lines start at "size="); yt-dlp itself reports no progress then
+	ffmpegTimeRe = regexp.MustCompile(`^(?:frame|size)=.*\btime=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)`)
 	// Strips the "[youtube] abc123: " or "[youtube:tab] PLx: " extractor prefix; the classes
 	// spell out Python's Unicode \w (letters, marks, digits, underscore)
 	extractorPrefixRe  = regexp.MustCompile(`^\[[\p{L}\p{M}\p{N}_:]+\]\s+[\p{L}\p{M}\p{N}_-]+:\s*`)
@@ -192,7 +216,8 @@ func CommonFlags(cookies bool, tools Tools) []string {
 // videos get a "1920x1080, 30 fps, avc1" summary in the comment tag. fragments is the number of
 // DASH/HLS fragments fetched concurrently (1-8).
 func BuildArgs(opts JobOptions, url, outDir string, cookies bool, fragments int, ffmpeg bool, tools Tools) []string {
-	args := downloadPrefix(outDir, OutputTemplate, cookies, fragments, tools)
+	args := downloadPrefix(outDir, outputTemplate(opts), cookies, fragments, tools)
+	args = append(args, clipArgs(opts)...)
 
 	if opts.Kind == "audio" {
 		switch {
@@ -224,6 +249,10 @@ func BuildArgs(opts JobOptions, url, outDir string, cookies bool, fragments int,
 		if ffmpeg {
 			args = append(args, summaryArgs()...)
 		}
+		if ffmpeg && opts.Container == "mp4" {
+			// The sound's codec, so sound MP4 players handle badly can be re-encoded
+			args = append(args, codecsPrint()...)
+		}
 	}
 
 	if ffmpeg {
@@ -234,23 +263,26 @@ func BuildArgs(opts JobOptions, url, outDir string, cookies bool, fragments int,
 }
 
 // WorkTemplate names the file a size-limited job downloads, "Title [id].<tag>.source.<ext>",
-// where tag is unique to the job. The ".source" marker keeps it apart from finished downloads
-// until the job has checked its size (and re-encoded it when needed), and the tag stops two
-// jobs for one video sharing it.
-func WorkTemplate(tag string) string { return "%(title)s [%(id)s]." + tag + ".source.%(ext)s" }
+// where tag is unique to the job and a clip's label goes after the title as in
+// outputTemplate. The ".source" marker keeps it apart from finished downloads until the job
+// has checked its size (and re-encoded it when needed), and the tag stops two jobs for one
+// video sharing it.
+func WorkTemplate(tag string, opts JobOptions) string {
+	return "%(title)s" + opts.ClipLabel() + " [%(id)s]." + tag + ".source.%(ext)s"
+}
 
 // codecsPrint reports the codecs of the file yt-dlp moved into place, so a size-limited job
 // can tell whether the download plays as it is.
 func codecsPrint() []string {
-	return []string{"--print", "after_move:" + CodecsPrefix + "%(vcodec)s %(acodec)s"}
+	return []string{"--print", "after_move:" + CodecsPrefix + "%(vcodec)s %(acodec)s %(abr)s %(audio_channels)s"}
 }
 
 // BuildFitArgs builds the yt-dlp command for a size-limited video whose streams already fit:
 // format is an exact selector from FitChoice.Selector, merged into MP4 without re-encoding
-// under WorkTemplate(tag). ffmpeg is required (NeedsFfmpeg), so the file gets the same tags as
-// BuildArgs gives it.
+// under WorkTemplate. It is never used for a clip, whose size is unknown until it is cut.
+// ffmpeg is required (NeedsFfmpeg), so the file gets the same tags as BuildArgs gives it.
 func BuildFitArgs(url, outDir string, cookies bool, fragments int, tools Tools, tag, format string) []string {
-	args := downloadPrefix(outDir, WorkTemplate(tag), cookies, fragments, tools)
+	args := downloadPrefix(outDir, WorkTemplate(tag, JobOptions{}), cookies, fragments, tools)
 	args = append(args, "-f", format, "--merge-output-format", "mp4")
 	args = append(args, summaryArgs()...)
 	args = append(args, codecsPrint()...)
@@ -261,10 +293,12 @@ func BuildFitArgs(url, outDir string, cookies bool, fragments int, tools Tools, 
 // BuildSourceArgs builds the yt-dlp command that fetches the source a size-limited job will
 // re-encode: at most height (the shorter side, as -S res measures it), H.264 and AAC preferred
 // so the encoder decodes the cheapest codec (and the download can be kept as it is if it
-// fits), merged into MP4 under WorkTemplate(tag). The stream summary comment is left out
-// because the re-encode changes the resolution it describes.
-func BuildSourceArgs(url, outDir string, cookies bool, fragments int, tools Tools, tag string, height int) []string {
-	args := downloadPrefix(outDir, WorkTemplate(tag), cookies, fragments, tools)
+// fits), merged into MP4 under WorkTemplate. Only the clip is fetched when opts has one. The
+// stream summary comment is left out because the re-encode changes the resolution it
+// describes.
+func BuildSourceArgs(opts JobOptions, url, outDir string, cookies bool, fragments int, tools Tools, tag string, height int) []string {
+	args := downloadPrefix(outDir, WorkTemplate(tag, opts), cookies, fragments, tools)
+	args = append(args, clipArgs(opts)...)
 	args = append(args,
 		"-f", "bv*+ba/b", "--merge-output-format", "mp4",
 		"-S", "res:"+strconv.Itoa(height)+",vcodec:h264,acodec:aac",
@@ -743,6 +777,9 @@ func (u *ParseUpdate) HasProgress() bool {
 type OutputParser struct {
 	// ExpectedStreams is how many files yt-dlp downloads before post-processing.
 	ExpectedStreams int
+	// ClipSeconds is the length of the clip being cut, so ffmpeg's time= position can be read
+	// as progress; 0 when the download is not a clip or its length is unknown.
+	ClipSeconds float64
 	// Percent is overall progress so far, 0-100.
 	Percent float64
 	// Filepath is the final path from the after_move print, or the merge/destination path as
@@ -754,6 +791,10 @@ type OutputParser struct {
 	// "mp4a.40.2", "none"), from the CodecsPrefix print; empty when it was not printed.
 	VCodec string
 	ACodec string
+	// ABR and AudioChannels are the finished file's audio bitrate (kbps) and channel count
+	// from the same print, 0 when yt-dlp does not know them ("NA").
+	ABR           float64
+	AudioChannels int
 	// Destinations lists every stream file announced so far.
 	Destinations []string
 
@@ -792,6 +833,15 @@ func (p *OutputParser) Feed(rawLine string) *ParseUpdate {
 	if strings.HasPrefix(line, ProgressPrefix) {
 		return p.progressJSON(line[len(ProgressPrefix):])
 	}
+	if m := ffmpegTimeRe.FindStringSubmatch(line); m != nil {
+		if p.ClipSeconds <= 0 {
+			return nil
+		}
+		h, _ := strconv.ParseFloat(m[1], 64)
+		mins, _ := strconv.ParseFloat(m[2], 64)
+		s, _ := strconv.ParseFloat(m[3], 64)
+		return &ParseUpdate{Percent: p.overall((h*3600 + mins*60 + s) / p.ClipSeconds * 100)}
+	}
 
 	p.tail = append(p.tail, line)
 	if len(p.tail) > TailLines {
@@ -803,7 +853,16 @@ func (p *OutputParser) Feed(rawLine string) *ParseUpdate {
 		return &ParseUpdate{Filepath: p.Filepath}
 	}
 	if strings.HasPrefix(line, CodecsPrefix) {
-		p.VCodec, p.ACodec, _ = strings.Cut(strings.TrimSpace(line[len(CodecsPrefix):]), " ")
+		fields := strings.Fields(line[len(CodecsPrefix):])
+		for len(fields) < 4 {
+			fields = append(fields, "")
+		}
+		p.VCodec, p.ACodec = fields[0], fields[1]
+		p.ABR, _ = strconv.ParseFloat(fields[2], 64)
+		p.AudioChannels, _ = strconv.Atoi(fields[3])
+		if p.ABR < 0 || math.IsNaN(p.ABR) || math.IsInf(p.ABR, 0) {
+			p.ABR = 0
+		}
 		return nil
 	}
 	if strings.HasPrefix(line, TitlePrefix) {
@@ -915,7 +974,8 @@ func (p *OutputParser) overall(streamPercent float64) *float64 {
 // ExpectedStreams returns how many files a download fetches before post-processing: 2 when a
 // video is merged from separate streams, otherwise 1.
 func ExpectedStreams(opts JobOptions, ffmpeg bool) int {
-	if opts.Kind == "video" && ffmpeg {
+	// A clip's streams are cut and merged by one ffmpeg run that reports a single position
+	if opts.Kind == "video" && ffmpeg && !opts.Clipped() {
 		return 2
 	}
 	return 1

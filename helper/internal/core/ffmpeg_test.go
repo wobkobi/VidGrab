@@ -208,6 +208,59 @@ func TestEncodeJobPassesX264(t *testing.T) {
 
 func last(args []string) string { return args[len(args)-1] }
 
+func TestEncodeJobPassesSvtAV1(t *testing.T) {
+	cases := []struct {
+		height  int
+		seconds float64
+		preset  string
+	}{{360, 0, "5"}, {720, 0, "7"}, {1080, 0, "8"}, {360, 1199, "5"}, {360, 1200, "8"}, {720, 3600, "8"}}
+	for _, c := range cases {
+		job := EncodeJob{Ffmpeg: "ffmpeg", Encoder: EncoderSvtAV1, Source: "s.mp4", Output: "o.mp4", Seconds: c.seconds,
+			Plan: EncodePlan{VideoKbps: 75, AudioKbps: 32, Channels: 1, Height: c.height, FPS: 24, Codec: CodecAV1}}
+		passes := job.Passes()
+		if len(passes) != 1 {
+			t.Fatalf("%d passes", len(passes))
+		}
+		args := passes[0]
+		if after(args, "-c:v") != "libsvtav1" || after(args, "-preset") != c.preset || after(args, "-b:v") != "75k" ||
+			slices.Contains(args, "-maxrate") || slices.Contains(args, "-pass") || after(args, "-pix_fmt") != "yuv420p" ||
+			after(args, "-fpsmax") != "24" || after(args, "-ac") != "1" || last(args) != "o.mp4" {
+			t.Errorf("%dp args %v", c.height, args)
+		}
+	}
+}
+
+func TestEncodeJobPassesSilent(t *testing.T) {
+	job := EncodeJob{Ffmpeg: "ffmpeg", Encoder: EncoderSvtAV1, Source: "s.mp4", Output: "o.mp4",
+		Plan: EncodePlan{VideoKbps: 900, Height: 720, FPS: 30, Codec: CodecAV1}}
+	args := job.Passes()[0]
+	if !slices.Contains(args, "-an") || slices.Contains(args, "-c:a") || last(args) != "o.mp4" {
+		t.Fatalf("args %v", args)
+	}
+}
+
+func TestMP4AudioFix(t *testing.T) {
+	for codec, want := range map[string]bool{
+		"mp4a.40.2": false, "aac": false, "mp3": false, "ac-3": false, "ec-3": false, "alac": false,
+		"opus": true, "vorbis": true, "flac": true, "pcm_s16le": true,
+		"none": false, "": false, "NA": false,
+	} {
+		if got := MP4AudioNeedsFix(codec); got != want {
+			t.Errorf("MP4AudioNeedsFix(%q) = %v", codec, got)
+		}
+	}
+	for channels, want := range map[int]int{0: 160, 1: 128, 2: 160, 6: 384, 8: 512, 10: 512} {
+		if got := FixAudioKbps(channels); got != want {
+			t.Errorf("FixAudioKbps(%d) = %d, want %d", channels, got, want)
+		}
+	}
+	args := MP4AudioFixArgs("ffmpeg", "in.mp4", "out.mp4", 6)
+	if after(args, "-map") != "0" || after(args, "-c") != "copy" || after(args, "-c:a") != "aac" ||
+		after(args, "-b:a") != "384k" || after(args, "-i") != "in.mp4" || last(args) != "out.mp4" {
+		t.Fatalf("args %v", args)
+	}
+}
+
 func TestEncodeJobPassesHardware(t *testing.T) {
 	cases := []struct {
 		encoder, rc, pixFmt string
@@ -355,6 +408,7 @@ func TestRealFfmpegFit(t *testing.T) {
 	if picked != EncoderX264 {
 		encoders = append(encoders, EncoderX264)
 	}
+	encoders = append(encoders, EncoderSvtAV1)
 	for _, encoder := range encoders {
 		for _, shape := range []struct{ name, size string }{{"landscape", "1280x720"}, {"portrait", "720x1280"}} {
 			t.Run(encoder+"/"+shape.name, func(t *testing.T) {
@@ -367,7 +421,11 @@ func TestRealFfmpegFit(t *testing.T) {
 					"-metadata", "title=Real ffmpeg test", "-shortest", source})
 
 				// 1 MB over 20 s: 380 kbps total, 64k stereo, 316 video at up to 15 fps, 480p
-				plan, err := PlanEncode(1, 20, VideoShape{Height: 720, Aspect: 16.0 / 9, FPS: 60})
+				codec := CodecH264
+				if encoder == EncoderSvtAV1 {
+					codec = CodecAV1
+				}
+				plan, err := PlanEncode(1, 20, VideoShape{Height: 720, Aspect: 16.0 / 9, FPS: 60}, codec)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -400,7 +458,7 @@ func TestRealFfmpegFit(t *testing.T) {
 					if size <= limit {
 						break
 					}
-					job.Plan = plan.Scaled(0.85)
+					job.Plan = job.Plan.Shrunk(size, limit, 20)
 				}
 				RemovePassLogs(job.PassLog)
 				if size > limit {

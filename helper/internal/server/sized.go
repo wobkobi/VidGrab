@@ -30,13 +30,13 @@ import (
 // StageConverting is the job stage while a size-limited video is re-encoded to fit.
 const StageConverting = "converting"
 
-// retryBitrateFactor scales the video bitrate for the second encode when the first came out
-// over the limit. Overshoots are a few percent (hardware rate control, MP4 overhead on short
-// clips), so 15% less clears them without giving up much quality.
-const retryBitrateFactor = 0.85
+// fitAttempts is how many encodes a size-limited conversion gets before it gives up. Each
+// retry takes the last overshoot out of the bitrate, so the second almost always fits and the
+// third is a safety net; Refract uses the same number so both behave alike.
+const fitAttempts = 3
 
-// errConvert is the job error for an encode that failed; a hardware encoder failing with it
-// is retried with libx264.
+// errConvert is the job error for an encode that failed; a hardware or AV1 encoder failing
+// with it is retried with libx264.
 const errConvert = "Could not convert the video"
 
 // sizedState is what a size-limited job keeps between its download and its conversion.
@@ -121,13 +121,20 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 	limitMB := j.options.MaxSizeMB
 	formats := core.FitFormats(raw)
 	qualityCap := core.QualityCap(j.options.Quality)
-	duration := core.InfoDuration(raw)
+	// Everything from here on sizes the part kept: the clip, or the whole video
+	duration, err := j.options.ClipLength(core.InfoDuration(raw))
+	if err != nil {
+		return outcome{errMsg: err.Error()}
+	}
 	source := core.SourceShape(formats, qualityCap)
 	if source.Height == 0 {
 		source.Height = qualityCap
 	}
-	plan, planErr := core.PlanEncode(limitMB, duration, source)
-	choice, fits := core.SelectFit(formats, qualityCap, core.LimitBytes(limitMB))
+	codec := core.FitCodec(j.options.Codec)
+	plan, planErr := core.PlanEncode(limitMB, duration, source, codec)
+	choice, fits := core.SelectFit(formats, qualityCap, core.LimitBytes(limitMB), codec)
+	// Stream sizes are for the whole video, and cutting a clip re-encodes it anyway
+	fits = fits && !j.options.Clipped()
 	// A fit shorter than the conversion would be loses to converting, which gives the
 	// better picture; when no conversion is possible any fit is better than failing
 	if fits && planErr == nil && choice.Height < plan.Height {
@@ -152,9 +159,15 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 		}
 		log.Printf("jobs: %s needs converting to fit %d MB: %dp at up to %g fps, %d+%d kbps", j.videoID, limitMB,
 			plan.Height, plan.FPS, plan.VideoKbps, plan.AudioKbps)
-		args = core.BuildSourceArgs(j.url, j.outDir, cookies, fragments, tools, tag, plan.Height)
+		args = core.BuildSourceArgs(j.options, j.url, j.outDir, cookies, fragments, tools, tag, plan.Height)
+		if j.options.Clipped() {
+			streams = 1
+		}
 	}
 	parser := core.NewOutputParser(streams)
+	if j.options.Clipped() {
+		parser.ClipSeconds = duration
+	}
 	res := q.download(j, runID, args, parser, false)
 	if res.errMsg == "" && res.filepath == "" {
 		res.errMsg = "yt-dlp did not report the downloaded file"
@@ -166,7 +179,30 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 	if vcodec == "" && fits {
 		vcodec, acodec = choice.VCodec, choice.ACodec
 	}
+	if planErr == nil && !fits {
+		plan = replanForAudio(plan, limitMB, duration, source, core.SourceAudio{Kbps: parser.ABR, Channels: parser.AudioChannels, Codec: parser.ACodec})
+	}
 	return q.finalise(ctx, j, runID, tools, res.filepath, vcodec, acodec, plan, planErr, duration)
+}
+
+// replanForAudio plans the conversion again now the downloaded source's sound is known (see
+// core.SourceAudio), so kbps the sound cannot use go to the picture. The download fetched at
+// most plan's height, so the new plan stays within it. plan is returned unchanged when
+// nothing is known about the sound.
+func replanForAudio(plan core.EncodePlan, limitMB int, duration float64, source core.VideoShape, audio core.SourceAudio) core.EncodePlan {
+	if audio.Kbps <= 0 && audio.Channels <= 0 {
+		return plan
+	}
+	source.Height, source.Audio = plan.Height, audio
+	replanned, err := core.PlanEncode(limitMB, duration, source, plan.Codec)
+	if err != nil {
+		return plan
+	}
+	if replanned != plan {
+		log.Printf("jobs: source sound is %.0f kbps, %d channels (%s): converting at %dp, %d+%d kbps",
+			audio.Kbps, audio.Channels, audio.Codec, replanned.Height, replanned.VideoKbps, replanned.AudioKbps)
+	}
+	return replanned
 }
 
 // planOutcome turns a core.PlanEncode error into a job error, with the longest length that
@@ -192,7 +228,7 @@ func (q *JobQueue) finalise(ctx context.Context, j *job, runID int, tools core.T
 	}
 	limitMB := j.options.MaxSizeMB
 	size := info.Size()
-	playable := core.PlaysAsIs(filepath.Ext(path), vcodec, acodec)
+	playable := core.PlaysAsIs(filepath.Ext(path), vcodec, acodec, core.FitCodec(j.options.Codec))
 	if playable && size <= core.LimitBytes(limitMB) {
 		log.Printf("jobs: %s downloaded at %.2f MB, within %d MB as it is", j.videoID, float64(size)/core.BytesPerMB, limitMB)
 		res, stopped := q.commit(j, runID, path, workBase(path, workTag(j)))
@@ -237,15 +273,21 @@ func (q *JobQueue) commit(j *job, runID int, from, base string) (res outcome, st
 	return outcome{filepath: final}, false
 }
 
-// pickEncoder returns the encoder to convert plan with: libx264 when the plan's bitrate is low
-// enough that it beats hardware (see core.EncodePlan.PrefersX264, which also skips the probe),
-// else the probe's pick, unless a real encode with it already failed in this process, in which
-// case libx264.
+// pickEncoder returns the encoder to convert plan with: SVT-AV1 for an AV1 plan, libx264 when
+// the plan's bitrate is low enough that it beats hardware (see core.EncodePlan.PrefersX264,
+// which also skips the probe), else the probe's pick. An encoder whose real encode already
+// failed in this process is replaced by libx264, so a broken AV1 encoder still gives a video
+// that fits.
 func (q *JobQueue) pickEncoder(ctx context.Context, ffmpeg string, plan core.EncodePlan) string {
-	if plan.PrefersX264() {
+	var encoder string
+	switch {
+	case plan.Codec == core.CodecAV1:
+		encoder = core.EncoderSvtAV1
+	case plan.PrefersX264():
 		return core.EncoderX264
+	default:
+		encoder = q.encoder(ctx, ffmpeg)
 	}
-	encoder := q.encoder(ctx, ffmpeg)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.failedEncoders[encoder] {
@@ -257,12 +299,13 @@ func (q *JobQueue) pickEncoder(ctx context.Context, ffmpeg string, plan core.Enc
 // convert re-encodes st.source to fit the job's limit and returns the outcome; a stopped run
 // returns an empty outcome, which settle ignores.
 //
-// Each attempt picks its encoder by its bitrate (see pickEncoder). A hardware encoder that
-// fails is dropped for the rest of the process and the attempt is rerun with libx264. An
-// encode that still comes out over the limit is retried once at retryBitrateFactor of the
-// bitrate. On success the encode is committed and the working file
-// deleted; on failure both are deleted, except that an encode that fits but cannot be moved
-// to its final name is kept. A pause keeps the working file for the resume.
+// Each attempt picks its encoder by its codec and bitrate (see pickEncoder). A hardware or
+// AV1 encoder that fails is dropped for the rest of the process and the attempt is rerun with
+// libx264. An encode that still comes out over the limit is retried, up to fitAttempts
+// encodes in all, with the overshoot taken out of the video bitrate each time (see
+// core.EncodePlan.Shrunk). On success the encode is committed and the working file deleted;
+// on failure both are deleted, except that an encode that fits but cannot be moved to its
+// final name is kept. A pause keeps the working file for the resume.
 func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.Tools, st sizedState) outcome {
 	q.mu.Lock()
 	if j.stoppedRun == runID {
@@ -293,18 +336,15 @@ func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.To
 		removeWithRetry(st.source)
 	}
 	var sizes []string
-	for attempt := 0; attempt < 2; attempt++ {
-		plan := st.plan
-		if attempt > 0 {
-			plan = plan.Scaled(retryBitrateFactor)
-		}
+	plan := st.plan
+	for attempt := 0; attempt < fitAttempts; attempt++ {
 		// Picked per attempt, so a retry that drops under the hardware threshold uses libx264
 		encoder := q.pickEncoder(ctx, ffmpeg, plan)
 		if q.stopped(j, runID) {
 			return outcome{}
 		}
 		enc := core.EncodeJob{Ffmpeg: ffmpeg, Encoder: encoder, Source: st.source, Output: output,
-			PassLog: passLog, Plan: plan}
+			PassLog: passLog, Plan: plan, Seconds: st.duration}
 		log.Printf("jobs: converting %s with %s at %d kbps", j.videoID, encoder, plan.VideoKbps)
 		res, size := q.encode(j, runID, enc, st.duration)
 		if res.errMsg == errConvert && encoder != core.EncoderX264 {
@@ -342,6 +382,7 @@ func (q *JobQueue) convert(ctx context.Context, j *job, runID int, tools core.To
 		}
 		sizes = append(sizes, fmt.Sprintf("%.2f MB", float64(size)/core.BytesPerMB))
 		log.Printf("jobs: %s came out at %s, over %d MB", j.videoID, sizes[len(sizes)-1], limitMB)
+		plan = plan.Shrunk(size, limit, st.duration)
 	}
 	discard()
 	return outcome{

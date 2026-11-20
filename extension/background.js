@@ -17,7 +17,7 @@ const TOKEN_RETRY_MS = 10000;
 const NOTIFICATION_PREFIX = "ytdl-job:";
 const GROUP_NOTIFICATION_PREFIX = "ytdl-group:";
 const NO_TOKEN_ERROR = "Could not get the backend key from the VidGrab helper. Run the helper once and restart Firefox.";
-const FOREIGN_ERROR = "Another program is using port 18956 and is not the yt-dl backend.";
+const FOREIGN_ERROR = "Another program is using the helper's port and is not the VidGrab helper.";
 const JOB_ACTIONS = new Set(["pause", "resume", "cancel", "retry", "open", "reveal"]);
 const ACTIVE = new Set(constants.ACTIVE_STATUSES);
 
@@ -111,6 +111,7 @@ async function callNativeHost() {
     if (reply && reply.status === "error") console.warn("[yt-dl] Native host:", reply.detail);
     if (!reply || typeof reply.token !== "string" || !reply.token) return false;
     api.setToken(reply.token);
+    api.setPort(reply.port);
     return true;
   } catch (err) {
     nativeError = constants.nativeErrorCode(err);

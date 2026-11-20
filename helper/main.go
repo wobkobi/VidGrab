@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -134,13 +135,15 @@ type serveFlags struct {
 	downloadsDir string
 }
 
-// parseServeFlags parses the "serve" arguments. --port, --data-dir and --downloads-dir are
-// hidden test hooks (a second instance on a scratch port and folders), left out of the usage.
+// parseServeFlags parses the "serve" arguments. --port is how the native host starts the
+// server on the port it chose; without it the server uses the one saved in the data
+// directory (see system.LoadPort). --port, --data-dir and --downloads-dir are also test
+// hooks (a second instance on a scratch port and folders), so they stay out of the usage.
 func parseServeFlags(args []string, output io.Writer) (serveFlags, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(output)
 	idle := fs.Float64("idle-timeout", 0, "exit after this many seconds without requests or active downloads (0 = never)")
-	port := fs.Int("port", system.ServerPort, "")
+	port := fs.Int("port", 0, "")
 	dataDir := fs.String("data-dir", "", "")
 	downloadsDir := fs.String("downloads-dir", "", "")
 	fs.Usage = func() {
@@ -164,6 +167,13 @@ func parseServeFlags(args []string, output io.Writer) (serveFlags, error) {
 	}
 	if parsed.dataDir == "" {
 		parsed.dataDir = system.DataDir()
+	}
+	if parsed.port <= 0 {
+		var err error
+		if parsed.port, err = system.LoadPort(filepath.Join(parsed.dataDir, system.PortFile)); err != nil {
+			fmt.Fprintf(output, "Could not choose a port: %v\n", err)
+			return serveFlags{}, err
+		}
 	}
 	return parsed, nil
 }

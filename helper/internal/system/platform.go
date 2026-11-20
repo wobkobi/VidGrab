@@ -12,8 +12,6 @@ import (
 )
 
 const (
-	// ServerPort is the loopback port the helper's HTTP server listens on.
-	ServerPort = 18956
 	// HostName is the native messaging host name registered with Firefox.
 	HostName = "vidgrab"
 	// ExtensionID is the add-on allowed to talk to the native host.

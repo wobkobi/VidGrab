@@ -42,6 +42,8 @@ const (
 	MaxFragments   = 8
 	// MaxSizeLimitMB bounds JobOptions.MaxSizeMB; 0 turns the size limit off.
 	MaxSizeLimitMB = 4000
+	// MaxClipSeconds bounds JobOptions.ClipStart and ClipEnd (100 hours, past any real video).
+	MaxClipSeconds = 100 * 3600
 	// MaxItemsLength bounds JobRequest.Items, in characters.
 	MaxItemsLength = MaxItemsSpecLength
 )
@@ -58,6 +60,59 @@ type JobOptions struct {
 	// upload limits such as Discord's; 0 means no limit. Audio jobs ignore it, and a capped
 	// video is always MP4 whatever Container says.
 	MaxSizeMB int `json:"max_size_mb"`
+	// ClipStart and ClipEnd trim the download to that range, in whole seconds from the start
+	// of the video. ClipEnd 0 means the end of the video; both 0 means the whole video.
+	ClipStart int `json:"clip_start"`
+	ClipEnd   int `json:"clip_end"`
+}
+
+// Clipped reports whether the job downloads only part of the video.
+func (o JobOptions) Clipped() bool { return o.ClipStart > 0 || o.ClipEnd > 0 }
+
+// ClipLabel returns the " (1m30s-4m05s)" that goes after the title of a clip's file name, or ""
+// for the whole video. An open end reads "end".
+func (o JobOptions) ClipLabel() string {
+	if !o.Clipped() {
+		return ""
+	}
+	end := "end"
+	if o.ClipEnd > 0 {
+		end = clipTime(o.ClipEnd)
+	}
+	return " (" + clipTime(o.ClipStart) + "-" + end + ")"
+}
+
+// clipTime formats seconds for a file name: "0m05s", "4m30s", "1h02m05s". Colons are not
+// allowed in Windows file names, hence the letters.
+func clipTime(seconds int) string {
+	h, m, s := seconds/3600, seconds/60%60, seconds%60
+	if h > 0 {
+		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
+	}
+	return fmt.Sprintf("%dm%02ds", m, s)
+}
+
+// ErrClipAfterEnd means the clip starts at or after the end of the video.
+var ErrClipAfterEnd = errors.New("The clip starts after the video ends")
+
+// ClipLength returns how many seconds of a video of duration seconds (0 when unknown) the job
+// keeps: the whole duration without a clip, else the clip with its end clamped to the video's.
+// An open-ended clip of a video of unknown length has unknown length (0).
+func (o JobOptions) ClipLength(duration float64) (float64, error) {
+	if !o.Clipped() {
+		return duration, nil
+	}
+	end := float64(o.ClipEnd)
+	if duration > 0 && (end == 0 || end > duration) {
+		end = duration
+	}
+	if end == 0 {
+		return 0, nil
+	}
+	if end <= float64(o.ClipStart) {
+		return 0, ErrClipAfterEnd
+	}
+	return end - float64(o.ClipStart), nil
 }
 
 // SizeLimited reports whether the job must fit MaxSizeMB.
@@ -118,9 +173,12 @@ func (s Settings) Apply(u SettingsUpdate) Settings {
 // NeedsFfmpeg reports whether a download cannot work without ffmpeg.
 //
 // MP3 always needs conversion; video at "best" or above 720p needs separate streams merged, and
-// a size-limited video may need a re-encode. M4A falls back to a native m4a stream, and 720p
-// and below fall back to a progressive format.
+// a size-limited video may need a re-encode. Cutting a clip always needs it. M4A falls back to
+// a native m4a stream, and 720p and below fall back to a progressive format.
 func NeedsFfmpeg(opts JobOptions) bool {
+	if opts.Clipped() {
+		return true
+	}
 	if opts.Kind == "audio" {
 		return opts.AudioFormat == "mp3"
 	}
@@ -215,6 +273,18 @@ func (o JobOptions) check(v *validator, loc []string) {
 		}
 	}
 	checkBounds(v, at(loc, "max_size_mb"), float64(o.MaxSizeMB), 0, MaxSizeLimitMB)
+	startOK := checkBounds(v, at(loc, "clip_start"), float64(o.ClipStart), 0, MaxClipSeconds)
+	endOK := checkBounds(v, at(loc, "clip_end"), float64(o.ClipEnd), 0, MaxClipSeconds)
+	if startOK && endOK {
+		checkClipOrder(v, loc, o)
+	}
+}
+
+// checkClipOrder rejects a clip whose end is not after its start.
+func checkClipOrder(v *validator, loc []string, o JobOptions) {
+	if o.ClipEnd > 0 && o.ClipEnd <= o.ClipStart {
+		v.add(at(loc, "clip_end"), "Input should be greater than clip_start")
+	}
 }
 
 // Validate checks the concurrency and fragments bounds.
@@ -430,6 +500,22 @@ func decodeJobOptions(v *validator, loc []string, raw json.RawMessage) JobOption
 		if n, ok := decodeInt(v, at(loc, "max_size_mb"), raw, 0, MaxSizeLimitMB); ok {
 			opts.MaxSizeMB = n
 		}
+	}
+	clipOK := true
+	for _, f := range []struct {
+		name   string
+		target *int
+	}{{"clip_start", &opts.ClipStart}, {"clip_end", &opts.ClipEnd}} {
+		if raw, present := fields[f.name]; present && !isNull(raw) {
+			n, ok := decodeInt(v, at(loc, f.name), raw, 0, MaxClipSeconds)
+			if ok {
+				*f.target = n
+			}
+			clipOK = clipOK && ok
+		}
+	}
+	if clipOK {
+		checkClipOrder(v, loc, opts)
 	}
 	return opts
 }

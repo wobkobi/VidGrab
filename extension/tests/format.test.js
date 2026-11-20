@@ -98,3 +98,25 @@ test("convertingLabel and convertingMeta show conversion progress", () => {
   assert.equal(format.convertingMeta({percent: 10, speed: "", eta: null}), "Converting 10%");
   assert.equal(format.convertingMeta({percent: 10, eta: "01:05"}), "Converting 10% · ETA 01:05");
 });
+
+test("parseTime reads seconds, m:ss and h:mm:ss", () => {
+  assert.equal(format.parseTime("90"), 90);
+  assert.equal(format.parseTime("1:30"), 90);
+  assert.equal(format.parseTime(" 1:02:05 "), 3725);
+  assert.equal(format.parseTime("0:05.7"), 5);
+  assert.equal(format.parseTime("90:00"), 5400);
+  assert.equal(format.parseTime("0"), 0);
+  assert.equal(format.parseTime(""), null);
+  assert.equal(format.parseTime("1:75"), null);
+  assert.equal(format.parseTime("1:2:3:4"), null);
+  assert.equal(format.parseTime("-5"), null);
+  assert.equal(format.parseTime("abc"), null);
+  assert.equal(format.parseTime(undefined), null);
+});
+
+test("clock formats seconds the way parseTime reads them", () => {
+  assert.equal(format.clock(0), "0:00");
+  assert.equal(format.clock(90.9), "1:30");
+  assert.equal(format.clock(3725), "1:02:05");
+  assert.equal(format.parseTime(format.clock(4000)), 4000);
+});

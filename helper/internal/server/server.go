@@ -780,6 +780,9 @@ func (s *Server) handleCreateJobs(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	if parsed.Kind != core.KindVideo && body.Options.Clipped() {
+		return 0, nil, newAPIError(http.StatusBadRequest, "Clips work on single videos only", "")
+	}
 	if core.NeedsFfmpeg(body.Options) && !s.cfg.Ffmpeg() {
 		return 0, nil, newAPIError(http.StatusUnprocessableEntity, errNeedsFfmpeg, needsFfmpegDetail)
 	}

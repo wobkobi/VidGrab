@@ -70,7 +70,13 @@ func DefaultInstaller() *Installer {
 		ManifestPath: defaultManifestPath(dir),
 		RegistryKey:  defaultRegistryKey(),
 		StopServer: func() (bool, error) {
-			return stopServer(ServerPort, readExistingToken(filepath.Join(dir, "data", auth.TokenFile)))
+			// An install from before ports were picked per install has no port file and
+			// listens on the old fixed one
+			port, ok := ReadPort(filepath.Join(dir, "data", PortFile))
+			if !ok {
+				port = LegacyPort
+			}
+			return stopServer(port, readExistingToken(filepath.Join(dir, "data", auth.TokenFile)))
 		},
 		ScheduleRemoval: scheduleDirRemoval,
 	}

@@ -402,6 +402,21 @@ html[dark] .yt-dl-panel {
 }
 
 .yt-dl-select:disabled,
+.yt-dl-time {
+  display: flex;
+  gap: 4px;
+}
+
+.yt-dl-time > .yt-dl-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.yt-dl-btn-small {
+  flex: none;
+  padding: 0 10px;
+}
+
 .yt-dl-input:disabled {
   opacity: 0.5;
 }

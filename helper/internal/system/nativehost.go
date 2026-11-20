@@ -74,11 +74,15 @@ func WriteNativeMessage(w io.Writer, message any) error {
 type NativeHost struct {
 	// LoadToken returns the install token.
 	LoadToken func() (string, error)
-	// Probe returns the /health body of the real server, nil when nothing answers, or an
-	// error wrapping auth.ErrForeignBackend when another program holds the port.
-	Probe func(token string) (map[string]any, error)
-	// Spawn starts the server detached.
-	Spawn func() error
+	// LoadPort returns the server's port, picking one on first use (see LoadPort).
+	LoadPort func() (int, error)
+	// NewPort replaces a port another program has taken (see NewPort).
+	NewPort func(avoid int) (int, error)
+	// Probe returns the /health body of the real server on port, nil when nothing answers,
+	// or an error wrapping auth.ErrForeignBackend when another program holds the port.
+	Probe func(port int, token string) (map[string]any, error)
+	// Spawn starts the server detached on port.
+	Spawn func(port int) error
 	// Wait bounds how long a freshly started server gets to answer.
 	Wait time.Duration
 	// Sleep and Now drive the wait loop.
@@ -91,17 +95,22 @@ type NativeHost struct {
 // NewNativeHost returns a NativeHost wired to the real data directory, port and executable.
 func NewNativeHost() *NativeHost {
 	dataDir := DataDir()
+	portFile := filepath.Join(dataDir, PortFile)
 	return &NativeHost{
 		LoadToken: func() (string, error) { return auth.LoadToken(filepath.Join(dataDir, auth.TokenFile)) },
-		Probe: func(token string) (map[string]any, error) {
-			return auth.Probe(ServerPort, token, probeTimeout)
+		LoadPort:  func() (int, error) { return LoadPort(portFile) },
+		NewPort:   func(avoid int) (int, error) { return NewPort(portFile, avoid) },
+		Probe: func(port int, token string) (map[string]any, error) {
+			return auth.Probe(port, token, probeTimeout)
 		},
-		Spawn: func() error {
+		Spawn: func(port int) error {
 			self, err := os.Executable()
 			if err != nil {
 				return err
 			}
-			argv := []string{self, "serve", "--idle-timeout", fmt.Sprint(ServerIdleTimeout)}
+			// The port is passed rather than read from the file, so the server and this
+			// host's wait loop always use the same one
+			argv := []string{self, "serve", "--idle-timeout", fmt.Sprint(ServerIdleTimeout), "--port", fmt.Sprint(port)}
 			return SpawnDetached(argv, filepath.Join(dataDir, ServerLogFile))
 		},
 		Wait:  ServerStartWait,
@@ -119,9 +128,10 @@ func RunNativeHost(stdin io.Reader, stdout io.Writer) int {
 
 // Run handles one message, replies and returns the exit code.
 //
-// Every reply carries the install token, since this host is the only channel that hands it
-// to the extension (the host manifest's allowed_extensions limits who can call it). The
-// "ping" command only reports whether the server runs; anything else also starts it.
+// Every reply carries the install token and the server's port, since this host is the only
+// channel that hands them to the extension (the host manifest's allowed_extensions limits who
+// can call it). The "ping" command only reports whether the server runs; anything else also
+// starts it.
 func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 	message, err := ReadNativeMessage(stdin)
 	if err != nil {
@@ -133,13 +143,18 @@ func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 		_ = WriteNativeMessage(stdout, map[string]any{"status": "error", "detail": "Could not read the backend key: " + err.Error()})
 		return 1
 	}
+	port, err := h.LoadPort()
+	if err != nil {
+		_ = WriteNativeMessage(stdout, map[string]any{"status": "error", "detail": "Could not choose the backend port: " + err.Error()})
+		return 1
+	}
 	var command any
 	if m, ok := message.(map[string]any); ok {
 		command = m["command"]
 	}
 	var reply map[string]any
 	if command == "ping" {
-		current, err := h.Probe(token)
+		current, err := h.Probe(port, token)
 		switch {
 		case err != nil:
 			reply = map[string]any{"status": "error", "detail": err.Error()}
@@ -149,9 +164,10 @@ func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 			reply = map[string]any{"status": "stopped", "detail": "Backend is not running"}
 		}
 	} else {
-		reply = h.EnsureServer(token)
+		reply, port = h.EnsureServer(port, token)
 	}
 	reply["token"] = token
+	reply["port"] = port
 	if err := WriteNativeMessage(stdout, reply); err != nil {
 		return 1
 	}
@@ -161,33 +177,46 @@ func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 	return 0
 }
 
-// EnsureServer makes sure the server runs, starting it when needed, and returns
-// {status, detail}: status is "running", "started", "starting" or "error". A program that
-// answers on the port without proving it knows the token is reported as an error rather
-// than trusted, and no server is started.
-func (h *NativeHost) EnsureServer(token string) map[string]any {
-	current, err := h.Probe(token)
-	if err != nil {
-		return map[string]any{"status": "error", "detail": err.Error()}
+// EnsureServer makes sure the server runs on port, starting it when needed, and returns
+// {status, detail} with the port it ended up on: status is "running", "started", "starting"
+// or "error".
+//
+// A program that answers on the port without proving it knows the token is never trusted.
+// It has taken the port since it was picked, so the server moves: a new port is picked and
+// saved, and the server started there. A program that takes the new port during the wait is
+// reported as an error.
+func (h *NativeHost) EnsureServer(port int, token string) (map[string]any, int) {
+	current, err := h.Probe(port, token)
+	if errors.Is(err, auth.ErrForeignBackend) {
+		taken := port
+		if port, err = h.NewPort(taken); err != nil {
+			return map[string]any{"status": "error", "detail": fmt.Sprintf("Port %d is taken and no other was free: %v", taken, err)}, taken
+		}
+		if h.Log != nil {
+			fmt.Fprintf(h.Log, "vidgrab: port %d is used by another program, moving to %d\n", taken, port)
+		}
+		current = nil
+	} else if err != nil {
+		return map[string]any{"status": "error", "detail": err.Error()}, port
 	}
 	if current != nil {
-		return map[string]any{"status": "running", "detail": fmt.Sprintf("Backend %s is running", healthVersion(current))}
+		return map[string]any{"status": "running", "detail": fmt.Sprintf("Backend %s is running", healthVersion(current))}, port
 	}
-	if err := h.Spawn(); err != nil {
-		return map[string]any{"status": "error", "detail": "Could not start the backend: " + err.Error()}
+	if err := h.Spawn(port); err != nil {
+		return map[string]any{"status": "error", "detail": "Could not start the backend: " + err.Error()}, port
 	}
 	deadline := h.Now().Add(h.Wait)
 	for h.Now().Before(deadline) {
 		h.Sleep(pollInterval)
-		current, err := h.Probe(token)
+		current, err := h.Probe(port, token)
 		if err != nil {
-			return map[string]any{"status": "error", "detail": err.Error()}
+			return map[string]any{"status": "error", "detail": err.Error()}, port
 		}
 		if current != nil {
-			return map[string]any{"status": "started", "detail": fmt.Sprintf("Backend %s started", healthVersion(current))}
+			return map[string]any{"status": "started", "detail": fmt.Sprintf("Backend %s started", healthVersion(current))}, port
 		}
 	}
-	return map[string]any{"status": "starting", "detail": "Backend was launched but has not answered yet"}
+	return map[string]any{"status": "starting", "detail": "Backend was launched but has not answered yet"}, port
 }
 
 // healthVersion returns the "version" field of a /health body, or "".

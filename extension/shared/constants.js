@@ -54,6 +54,13 @@ YTDL.constants = (function () {
     {value: "av1", label: "AV1"},
   ];
 
+  // Codec choices while a max size is set: the output is always re-encoded or picked as one of
+  // these, so a preference like VP9 has no meaning there
+  const SIZED_CODECS = [
+    {value: "any", label: "H.264 (plays everywhere)"},
+    {value: "av1", label: "AV1 (sharper, newer devices)"},
+  ];
+
   const CONTAINERS = [
     {value: "mp4", label: "MP4"},
     {value: "mkv", label: "MKV"},
@@ -124,13 +131,14 @@ YTDL.constants = (function () {
 
   /**
    * Report whether a download needs ffmpeg: MP3 conversion, video above 720p (or "best"),
-   * which arrives as separate streams that must be merged, and any video max size, since
-   * fitting a size may re-encode.
-   * @param {{kind?: string, quality?: string, audio_format?: string, max_size_mb?: number}} options - Job options.
+   * which arrives as separate streams that must be merged, any video max size, since
+   * fitting a size may re-encode, and any clip, which ffmpeg cuts.
+   * @param {{kind?: string, quality?: string, audio_format?: string, max_size_mb?: number, clip_start?: number, clip_end?: number}} options - Job options.
    * @returns {boolean} True when the backend must have ffmpeg to run the job.
    */
   function NEEDS_FFMPEG(options) {
     if (!options) return false;
+    if (Number(options.clip_start) > 0 || Number(options.clip_end) > 0) return true;
     if (options.kind === "audio") return options.audio_format === "mp3";
     if (Number(options.max_size_mb) > 0) return true;
     if (options.quality === "best") return true;
@@ -273,6 +281,7 @@ YTDL.constants = (function () {
     KINDS,
     QUALITIES,
     CODECS,
+    SIZED_CODECS,
     CONTAINERS,
     AUDIO_FORMATS,
     AUDIO_BITRATES,

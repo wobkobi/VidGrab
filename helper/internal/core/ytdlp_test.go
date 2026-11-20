@@ -670,13 +670,13 @@ func TestChildEnvForcesUTF8(t *testing.T) {
 func TestSizedDownloadArgs(t *testing.T) {
 	tools := Tools{YtDlp: "yt-dlp"}
 	fit := BuildFitArgs("https://www.youtube.com/watch?v=jNQXAC9IVRw", "out", false, 4, tools, "1a2b3c4d", "133+140")
-	source := BuildSourceArgs("https://www.youtube.com/watch?v=jNQXAC9IVRw", "out", false, 4, tools, "1a2b3c4d", 480)
+	source := BuildSourceArgs(DefaultJobOptions(), "https://www.youtube.com/watch?v=jNQXAC9IVRw", "out", false, 4, tools, "1a2b3c4d", 480)
 	for _, args := range [][]string{fit, source} {
 		out := args[slices.Index(args, "-o")+1]
 		if out != filepath.Join("out", "%(title)s [%(id)s].1a2b3c4d.source.%(ext)s") {
 			t.Errorf("output template %q", out)
 		}
-		if !slices.Contains(args, "after_move:YTDLP_CODECS %(vcodec)s %(acodec)s") {
+		if !slices.Contains(args, "after_move:YTDLP_CODECS %(vcodec)s %(acodec)s %(abr)s %(audio_channels)s") {
 			t.Errorf("no codecs print in %v", args)
 		}
 	}
@@ -690,7 +690,61 @@ func TestParserCodecs(t *testing.T) {
 	if u := parser.Feed("YTDLP_CODECS avc1.4d401f mp4a.40.2"); u != nil {
 		t.Errorf("codecs line gave an update %+v", u)
 	}
-	if parser.VCodec != "avc1.4d401f" || parser.ACodec != "mp4a.40.2" {
-		t.Fatalf("codecs %q %q", parser.VCodec, parser.ACodec)
+	if parser.VCodec != "avc1.4d401f" || parser.ACodec != "mp4a.40.2" || parser.ABR != 0 || parser.AudioChannels != 0 {
+		t.Fatalf("codecs %q %q %v %d", parser.VCodec, parser.ACodec, parser.ABR, parser.AudioChannels)
+	}
+	parser.Feed("YTDLP_CODECS avc1.4d401f mp4a.40.5 48.01 1")
+	if parser.ACodec != "mp4a.40.5" || parser.ABR != 48.01 || parser.AudioChannels != 1 {
+		t.Fatalf("audio %q %v %d", parser.ACodec, parser.ABR, parser.AudioChannels)
+	}
+	parser.Feed("YTDLP_CODECS vp9 opus NA NA")
+	if parser.ACodec != "opus" || parser.ABR != 0 || parser.AudioChannels != 0 {
+		t.Fatalf("unknown audio %q %v %d", parser.ACodec, parser.ABR, parser.AudioChannels)
+	}
+}
+
+func TestClipArgs(t *testing.T) {
+	opts := DefaultJobOptions()
+	opts.ClipStart, opts.ClipEnd = 90, 270
+	args := BuildArgs(opts, testURL, testOut, false, 4, true, testTools)
+	if !slices.Contains(args, "*90-270") || !slices.Contains(args, "--force-keyframes-at-cuts") {
+		t.Fatalf("clip flags missing: %v", args)
+	}
+	want := filepath.Join(testOut, "%(title)s (1m30s-4m30s) [%(id)s].%(ext)s")
+	if !slices.Contains(args, want) {
+		t.Fatalf("template %s missing: %v", want, args)
+	}
+	opts.ClipEnd = 0
+	if args := BuildArgs(opts, testURL, testOut, false, 4, true, testTools); !slices.Contains(args, "*90-inf") {
+		t.Fatalf("open end missing: %v", args)
+	}
+	source := BuildSourceArgs(opts, testURL, testOut, false, 4, testTools, "1a2b3c4d", 480)
+	if !slices.Contains(source, "*90-inf") || !slices.Contains(source, filepath.Join(testOut, "%(title)s (1m30s-end) [%(id)s].1a2b3c4d.source.%(ext)s")) {
+		t.Fatalf("sized clip args: %v", source)
+	}
+	if args := BuildArgs(DefaultJobOptions(), testURL, testOut, false, 4, true, testTools); slices.Contains(args, "--download-sections") {
+		t.Fatalf("whole video should not be cut: %v", args)
+	}
+	if got := ExpectedStreams(opts, true); got != 1 {
+		t.Fatalf("ExpectedStreams for a clip = %d, want 1", got)
+	}
+}
+
+func TestParserClipProgress(t *testing.T) {
+	p := NewOutputParser(1)
+	p.ClipSeconds = 20
+	u := p.Feed("frame=  159 fps=144 q=28.0 size=     768kB time=00:00:05.00 bitrate= 525.2kbits/s speed=6.62x")
+	if u == nil || u.Percent == nil || *u.Percent != 25 {
+		t.Fatalf("update = %+v", u)
+	}
+	if u := p.Feed("size=     256kB time=00:00:15.00 bitrate= 140kbits/s speed=9x"); u == nil || *u.Percent != 75 {
+		t.Fatalf("audio update = %+v", u)
+	}
+	if p.Detail() != "" {
+		t.Fatalf("status lines should stay out of the detail: %q", p.Detail())
+	}
+	unknown := NewOutputParser(1)
+	if u := unknown.Feed("frame=  1 fps=0 time=00:00:01.00 bitrate=N/A"); u != nil {
+		t.Fatalf("no clip length should give no update: %+v", u)
 	}
 }

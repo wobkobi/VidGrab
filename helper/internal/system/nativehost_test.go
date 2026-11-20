@@ -63,19 +63,35 @@ func TestNativeTruncatedAndOversized(t *testing.T) {
 // fakeHost builds a NativeHost whose probe answers come from answers in turn (the last
 // repeats), with an instant fake clock.
 type fakeHost struct {
-	answers  []any // map[string]any, nil, or error
-	probes   int
-	spawned  int
-	spawnErr error
-	now      time.Time
+	answers    []any // map[string]any, nil, or error
+	probes     int
+	probed     []int // the port of every probe
+	spawned    int
+	spawnPort  int
+	spawnErr   error
+	newPortErr error
+	avoided    []int // the avoid argument of every NewPort call
+	now        time.Time
 }
+
+// fakePort is the saved port and fakeNewPort the one NewPort picks.
+const (
+	fakePort    = 24680
+	fakeNewPort = 31337
+)
 
 func (f *fakeHost) host() *NativeHost {
 	return &NativeHost{
 		LoadToken: func() (string, error) { return strings.Repeat("t", 43), nil },
-		Probe: func(string) (map[string]any, error) {
+		LoadPort:  func() (int, error) { return fakePort, nil },
+		NewPort: func(avoid int) (int, error) {
+			f.avoided = append(f.avoided, avoid)
+			return fakeNewPort, f.newPortErr
+		},
+		Probe: func(port int, _ string) (map[string]any, error) {
 			answer := f.answers[min(f.probes, len(f.answers)-1)]
 			f.probes++
+			f.probed = append(f.probed, port)
 			switch a := answer.(type) {
 			case error:
 				return nil, a
@@ -84,8 +100,9 @@ func (f *fakeHost) host() *NativeHost {
 			}
 			return nil, nil
 		},
-		Spawn: func() error {
+		Spawn: func(port int) error {
 			f.spawned++
+			f.spawnPort = port
 			return f.spawnErr
 		},
 		Wait:  ServerStartWait,
@@ -95,28 +112,29 @@ func (f *fakeHost) host() *NativeHost {
 }
 
 func foreign() error {
-	return &auth.ForeignBackendError{Msg: fmt.Sprintf("Port %d is used by another program, not the VidGrab helper", ServerPort)}
+	return &auth.ForeignBackendError{Msg: fmt.Sprintf("Port %d is used by another program, not the VidGrab helper", fakePort)}
 }
 
 func TestAlreadyRunningDoesNotSpawn(t *testing.T) {
 	f := &fakeHost{answers: []any{map[string]any{"version": "2.0.0"}}}
-	reply := f.host().EnsureServer("tok")
-	if reply["status"] != "running" || reply["detail"] != "Backend 2.0.0 is running" || f.spawned != 0 {
+	reply, port := f.host().EnsureServer(fakePort, "tok")
+	if reply["status"] != "running" || reply["detail"] != "Backend 2.0.0 is running" || f.spawned != 0 || port != fakePort {
 		t.Fatalf("reply %v, spawned %d", reply, f.spawned)
 	}
 }
 
 func TestStartsServerWhenDown(t *testing.T) {
 	f := &fakeHost{answers: []any{nil, nil, map[string]any{"version": "2.0.0"}}}
-	reply := f.host().EnsureServer("tok")
-	if reply["status"] != "started" || reply["detail"] != "Backend 2.0.0 started" || f.spawned != 1 {
+	reply, port := f.host().EnsureServer(fakePort, "tok")
+	if reply["status"] != "started" || reply["detail"] != "Backend 2.0.0 started" || f.spawned != 1 ||
+		f.spawnPort != fakePort || port != fakePort || len(f.avoided) != 0 {
 		t.Fatalf("reply %v, spawned %d", reply, f.spawned)
 	}
 }
 
 func TestStartThatNeverAnswers(t *testing.T) {
 	f := &fakeHost{answers: []any{nil}}
-	reply := f.host().EnsureServer("tok")
+	reply, _ := f.host().EnsureServer(fakePort, "tok")
 	if reply["status"] != "starting" {
 		t.Fatalf("reply %v", reply)
 	}
@@ -128,16 +146,33 @@ func TestStartThatNeverAnswers(t *testing.T) {
 
 func TestSpawnFailure(t *testing.T) {
 	f := &fakeHost{answers: []any{nil}, spawnErr: errors.New("no such file")}
-	reply := f.host().EnsureServer("tok")
+	reply, _ := f.host().EnsureServer(fakePort, "tok")
 	if reply["status"] != "error" || !strings.Contains(reply["detail"].(string), "no such file") {
 		t.Fatalf("reply %v", reply)
 	}
 }
 
-func TestForeignBackendIsAnError(t *testing.T) {
+func TestForeignBackendMovesToANewPort(t *testing.T) {
+	f := &fakeHost{answers: []any{foreign(), map[string]any{"version": "2.3.0"}}}
+	reply, port := f.host().EnsureServer(fakePort, "tok")
+	if reply["status"] != "started" || port != fakeNewPort || f.spawnPort != fakeNewPort ||
+		fmt.Sprint(f.avoided) != fmt.Sprint([]int{fakePort}) || fmt.Sprint(f.probed) != fmt.Sprint([]int{fakePort, fakeNewPort}) {
+		t.Fatalf("reply %v, port %d, spawned on %d, avoided %v, probed %v", reply, port, f.spawnPort, f.avoided, f.probed)
+	}
+}
+
+func TestForeignBackendWithNoFreePort(t *testing.T) {
+	f := &fakeHost{answers: []any{foreign()}, newPortErr: errors.New("could not find a free port")}
+	reply, port := f.host().EnsureServer(fakePort, "tok")
+	if reply["status"] != "error" || !strings.Contains(reply["detail"].(string), "no other was free") || f.spawned != 0 || port != fakePort {
+		t.Fatalf("reply %v, port %d, spawned %d", reply, port, f.spawned)
+	}
+}
+
+func TestForeignBackendOnTheNewPortIsAnError(t *testing.T) {
 	f := &fakeHost{answers: []any{foreign()}}
-	reply := f.host().EnsureServer("tok")
-	if reply["status"] != "error" || !strings.Contains(reply["detail"].(string), "another program") || f.spawned != 0 {
+	reply, _ := f.host().EnsureServer(fakePort, "tok")
+	if reply["status"] != "error" || !strings.Contains(reply["detail"].(string), "another program") || f.spawned != 1 {
 		t.Fatalf("reply %v, spawned %d", reply, f.spawned)
 	}
 }
@@ -156,7 +191,7 @@ func runHost(t *testing.T, h *NativeHost, input []byte) (int, map[string]any) {
 func TestRunStartCommand(t *testing.T) {
 	f := &fakeHost{answers: []any{nil, map[string]any{"version": "2.1.0"}}}
 	code, reply := runHost(t, f.host(), frame(t, map[string]any{"command": "start"}))
-	want := map[string]any{"status": "started", "detail": "Backend 2.1.0 started", "token": strings.Repeat("t", 43)}
+	want := map[string]any{"status": "started", "detail": "Backend 2.1.0 started", "token": strings.Repeat("t", 43), "port": float64(fakePort)}
 	if code != 0 || fmt.Sprint(reply) != fmt.Sprint(want) {
 		t.Fatalf("code %d, reply %v", code, reply)
 	}
@@ -165,7 +200,7 @@ func TestRunStartCommand(t *testing.T) {
 func TestRunPing(t *testing.T) {
 	f := &fakeHost{answers: []any{nil}}
 	_, reply := runHost(t, f.host(), frame(t, map[string]any{"command": "ping"}))
-	if reply["status"] != "stopped" || reply["token"] != strings.Repeat("t", 43) || f.spawned != 0 {
+	if reply["status"] != "stopped" || reply["token"] != strings.Repeat("t", 43) || reply["port"] != float64(fakePort) || f.spawned != 0 {
 		t.Fatalf("reply %v, spawned %d", reply, f.spawned)
 	}
 }

@@ -43,12 +43,18 @@ func TestParseServeFlags(t *testing.T) {
 		t.Fatalf("unexpected options %+v", opts)
 	}
 
-	defaults, err := parseServeFlags(nil, io.Discard)
+	data := t.TempDir()
+	defaults, err := parseServeFlags([]string{"--data-dir", data}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.idleTimeout != 0 || defaults.port != 18956 || defaults.dataDir == "" || defaults.downloadsDir != "" {
+	if defaults.idleTimeout != 0 || defaults.port < 20000 || defaults.port > 32767 || defaults.downloadsDir != "" {
 		t.Fatalf("unexpected defaults %+v", defaults)
+	}
+	// The picked port is saved, so the next start uses the same one
+	again, err := parseServeFlags([]string{"--data-dir", data}, io.Discard)
+	if err != nil || again.port != defaults.port {
+		t.Fatalf("second start got port %d, %v; want %d", again.port, err, defaults.port)
 	}
 
 	for _, bad := range [][]string{{"--idle-timeout", "soon"}, {"extra"}, {"--nope"}} {

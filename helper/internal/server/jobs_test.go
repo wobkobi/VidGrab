@@ -642,6 +642,56 @@ func TestUnknownJobReturns404(t *testing.T) {
 	}
 }
 
+// audioFixStarter fakes a video download that reports acodec, then an ffmpeg that writes
+// "fixed" to its output.
+func audioFixStarter(t *testing.T, path, acodec string) *fakeStarter {
+	return &fakeStarter{byArgs: func(argv []string) *fakeProc {
+		if strings.HasPrefix(filepath.Base(argv[0]), "ffmpeg") {
+			if err := os.WriteFile(argv[len(argv)-1], []byte("fixed"), 0o600); err != nil {
+				t.Error(err)
+			}
+			return newFakeProc(nil, 0, false)
+		}
+		if err := os.WriteFile(path, []byte("opus"), 0o600); err != nil {
+			t.Error(err)
+		}
+		return newFakeProc([]string{"YTDLP_FILE " + path, "YTDLP_CODECS vp09.00.40.08 " + acodec + " 130 2"}, 0, false)
+	}}
+}
+
+func TestOpusInMP4IsReencodedToAAC(t *testing.T) {
+	dir := t.TempDir()
+	starter := audioFixStarter(t, filepath.Join(dir, "a [jNQXAC9IVRw].mp4"), "opus")
+	q := makeQueue(t, dir, starter)
+	id := create(t, q, watchURL(videos[0]), defaults())
+	waitFor(t, func() bool { return status(t, q, id) == "complete" })
+	if !slices.Contains(starter.procs[0].args, "after_move:YTDLP_CODECS %(vcodec)s %(acodec)s %(abr)s %(audio_channels)s") {
+		t.Fatalf("no codecs print in %v", starter.procs[0].args)
+	}
+	if starter.count() != 2 || starter.procs[1].argAfter("-c:a") != "aac" || starter.procs[1].argAfter("-b:a") != "160k" ||
+		starter.procs[1].argAfter("-c") != "copy" {
+		t.Fatalf("processes %d, last %v", starter.count(), starter.procs[starter.count()-1].args)
+	}
+	data, err := os.ReadFile(str(snapshot(t, q, id).Filepath))
+	if err != nil || string(data) != "fixed" {
+		t.Fatalf("final file %q, %v", data, err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.audio.mp4")); len(leftovers) > 0 {
+		t.Fatalf("temp files left: %v", leftovers)
+	}
+}
+
+func TestAACInMP4IsKept(t *testing.T) {
+	dir := t.TempDir()
+	starter := audioFixStarter(t, filepath.Join(dir, "a [jNQXAC9IVRw].mp4"), "mp4a.40.2")
+	q := makeQueue(t, dir, starter)
+	id := create(t, q, watchURL(videos[0]), defaults())
+	waitFor(t, func() bool { return status(t, q, id) == "complete" })
+	if starter.count() != 1 {
+		t.Fatalf("%d processes, want only yt-dlp", starter.count())
+	}
+}
+
 func TestFinishedFileRequiresExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	final := filepath.Join(dir, "a [jNQXAC9IVRw].mp4")

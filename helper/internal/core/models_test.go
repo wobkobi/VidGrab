@@ -133,7 +133,7 @@ func TestSettingsApplyAndJSON(t *testing.T) {
 
 func TestJobOptionsJSONAndValidate(t *testing.T) {
 	data, _ := json.Marshal(DefaultJobOptions())
-	if string(data) != `{"kind":"video","quality":"best","codec":"any","container":"mp4","audio_format":"mp3","audio_bitrate":"192","max_size_mb":0}` {
+	if string(data) != `{"kind":"video","quality":"best","codec":"any","container":"mp4","audio_format":"mp3","audio_bitrate":"192","max_size_mb":0,"clip_start":0,"clip_end":0}` {
 		t.Fatalf("json = %s", data)
 	}
 	if DefaultJobOptions().Validate() != nil {
@@ -204,5 +204,88 @@ func TestNeedsFfmpeg(t *testing.T) {
 		if got := NeedsFfmpeg(c.opts); got != c.want {
 			t.Errorf("NeedsFfmpeg(%+v) = %v, want %v", c.opts, got, c.want)
 		}
+	}
+}
+
+func TestDecodeClip(t *testing.T) {
+	cases := []struct {
+		body       string
+		start, end int
+		detail     string
+	}{
+		{`{"url":"x"}`, 0, 0, ""},
+		{`{"url":"x","options":{"clip_start":90,"clip_end":270}}`, 90, 270, ""},
+		{`{"url":"x","options":{"clip_start":"30"}}`, 30, 0, ""},
+		{`{"url":"x","options":{"clip_start":null,"clip_end":null}}`, 0, 0, ""},
+		{`{"url":"x","options":{"clip_end":60}}`, 0, 60, ""},
+		{`{"url":"x","options":{"clip_start":60,"clip_end":60}}`, 0, 0, "body.options.clip_end: Input should be greater than clip_start"},
+		{`{"url":"x","options":{"clip_start":-1}}`, 0, 0, "body.options.clip_start: Input should be greater than or equal to 0"},
+		{`{"url":"x","options":{"clip_end":360001}}`, 0, 0, "body.options.clip_end: Input should be less than or equal to 360000"},
+		{`{"url":"x","options":{"clip_start":1.5}}`, 0, 0, "body.options.clip_start: Input should be a valid integer, got a number with a fractional part"},
+	}
+	for _, c := range cases {
+		req, err := DecodeJobRequest([]byte(c.body))
+		if c.detail != "" {
+			if err == nil || err.Error() != c.detail {
+				t.Errorf("%s: error %v, want %s", c.body, err, c.detail)
+			}
+			continue
+		}
+		if err != nil || req.Options.ClipStart != c.start || req.Options.ClipEnd != c.end {
+			t.Errorf("%s: got %d-%d, %v", c.body, req.Options.ClipStart, req.Options.ClipEnd, err)
+		}
+	}
+	bad := DefaultJobOptions()
+	bad.ClipStart, bad.ClipEnd = 50, 40
+	if err := bad.Validate(); err == nil || err.Error() != "clip_end: Input should be greater than clip_start" {
+		t.Errorf("Validate = %v", err)
+	}
+}
+
+func TestClipLabelAndLength(t *testing.T) {
+	clip := func(start, end int) JobOptions {
+		o := DefaultJobOptions()
+		o.ClipStart, o.ClipEnd = start, end
+		return o
+	}
+	labels := []struct {
+		opts JobOptions
+		want string
+	}{
+		{clip(0, 0), ""},
+		{clip(5, 12), " (0m05s-0m12s)"},
+		{clip(90, 0), " (1m30s-end)"},
+		{clip(3725, 7200), " (1h02m05s-2h00m00s)"},
+	}
+	for _, c := range labels {
+		if got := c.opts.ClipLabel(); got != c.want {
+			t.Errorf("ClipLabel(%d-%d) = %q, want %q", c.opts.ClipStart, c.opts.ClipEnd, got, c.want)
+		}
+	}
+	lengths := []struct {
+		opts     JobOptions
+		duration float64
+		want     float64
+		err      error
+	}{
+		{clip(0, 0), 600, 600, nil},
+		{clip(60, 240), 600, 180, nil},
+		{clip(60, 0), 600, 540, nil},
+		{clip(500, 900), 600, 100, nil}, // end clamped to the video
+		{clip(60, 240), 0, 180, nil},    // unknown length, set end
+		{clip(60, 0), 0, 0, nil},        // unknown length, open end
+		{clip(700, 0), 600, 0, ErrClipAfterEnd},
+		{clip(600, 700), 600, 0, ErrClipAfterEnd},
+	}
+	for _, c := range lengths {
+		got, err := c.opts.ClipLength(c.duration)
+		if got != c.want || !errors.Is(err, c.err) {
+			t.Errorf("ClipLength(%d-%d of %g) = %g, %v", c.opts.ClipStart, c.opts.ClipEnd, c.duration, got, err)
+		}
+	}
+	audio := clip(10, 20)
+	audio.Kind, audio.AudioFormat = "audio", "m4a"
+	if !NeedsFfmpeg(audio) {
+		t.Error("a clipped m4a download should need ffmpeg")
 	}
 }

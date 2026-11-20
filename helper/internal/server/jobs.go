@@ -830,13 +830,41 @@ func (q *JobQueue) run(j *job, runID int) {
 	args := core.BuildArgs(j.options, j.url, j.outDir, q.cookies, q.fragments, ffmpeg, tools)
 	q.mu.Unlock()
 	parser := core.NewOutputParser(core.ExpectedStreams(j.options, ffmpeg))
+	// Without the video's length only a clip with a set end has a known length
+	parser.ClipSeconds, _ = j.options.ClipLength(0)
 	res := q.download(j, runID, args, parser, true)
+	if res.errMsg == "" && res.filepath != "" && !q.stopped(j, runID) &&
+		j.options.Kind == "video" && j.options.Container == "mp4" && core.MP4AudioNeedsFix(parser.ACodec) {
+		res = q.fixMP4Audio(j, runID, tools, res.filepath, parser.ACodec, parser.AudioChannels)
+	}
 	// The after_move print is the path after every post-processor (audio extraction, metadata),
 	// so the rename moves the file as it will stay
 	if res.errMsg == "" && res.filepath != "" && !q.stopped(j, runID) {
 		res = q.finishDownload(j, runID, res.filepath, parser.PreExisting())
 	}
 	q.settle(j, runID, res)
+}
+
+// fixMP4Audio re-encodes the sound of the MP4 at path to AAC, copying every other stream, for
+// sound yt-dlp merged in a codec MP4 players handle badly (Opus when a site offers no AAC; see
+// core.MP4AudioNeedsFix). The new file replaces the old one under the same name. A failed or
+// stopped fix leaves the download as it was, since it still holds everything.
+func (q *JobQueue) fixMP4Audio(j *job, runID int, tools core.Tools, path, acodec string, channels int) outcome {
+	kept := outcome{filepath: path}
+	temp := strings.TrimSuffix(path, filepath.Ext(path)) + ".audio.mp4"
+	log.Printf("jobs: %s has %s sound in MP4, re-encoding it to AAC %dk", j.videoID, acodec, core.FixAudioKbps(channels))
+	argv := core.MP4AudioFixArgs(core.FfmpegPath(tools), path, temp, channels)
+	code, err := q.runProcess(j, runID, argv, func(string) {})
+	if err != nil || code != 0 || q.stopped(j, runID) {
+		log.Printf("jobs: could not re-encode the sound of %s (exit %d, %v), keeping it as it is", j.videoID, code, err)
+		removeWithRetry(temp)
+		return kept
+	}
+	if err := os.Rename(temp, path); err != nil {
+		log.Printf("jobs: could not replace %s with its AAC copy: %v", j.videoID, err)
+		removeWithRetry(temp)
+	}
+	return kept
 }
 
 // download runs one yt-dlp command for j, applying its progress to the job, and returns the

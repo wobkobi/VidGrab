@@ -2,7 +2,9 @@
 var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
 
 YTDL.api = (function () {
-  const BASE_URL = "http://127.0.0.1:18956";
+  // The port a helper listened on before each install picked its own; used until the native
+  // host names the real one, and for helpers too old to name it
+  const LEGACY_PORT = 18956;
   const NOT_RUNNING = "Backend not running";
   const TOKEN_HEADER = "X-YTDL-Token";
   // Creating jobs for a playlist or channel lists its entries first, which the backend allows 120s
@@ -11,6 +13,7 @@ YTDL.api = (function () {
 
   // Install token from the native host; sent on every call except /health
   let token = null;
+  let baseUrl = `http://127.0.0.1:${LEGACY_PORT}`;
 
   /**
    * Send one request to the backend with a timeout. The custom header forces a CORS
@@ -31,7 +34,7 @@ YTDL.api = (function () {
 
     let response;
     try {
-      response = await fetch(BASE_URL + path, {
+      response = await fetch(baseUrl + path, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -115,7 +118,6 @@ YTDL.api = (function () {
   }
 
   return {
-    BASE_URL,
     NOT_RUNNING,
     TIMEOUTS,
     request,
@@ -134,6 +136,21 @@ YTDL.api = (function () {
      */
     hasToken() {
       return Boolean(token);
+    },
+    /**
+     * Set the port the helper listens on, as the native host reports it.
+     * @param {unknown} value - Port number; anything that is not a valid port means the legacy port.
+     */
+    setPort(value) {
+      const port = Number(value);
+      baseUrl = `http://127.0.0.1:${Number.isInteger(port) && port > 0 && port < 65536 ? port : LEGACY_PORT}`;
+    },
+    /**
+     * The address requests go to.
+     * @returns {string} Base URL such as "http://127.0.0.1:24680".
+     */
+    baseUrl() {
+      return baseUrl;
     },
     health: (nonce) =>
       request("GET", nonce ? `/health?nonce=${encodeURIComponent(nonce)}` : "/health", {timeout: TIMEOUTS.health, noToken: true}),
