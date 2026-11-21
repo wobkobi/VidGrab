@@ -152,6 +152,35 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   };
 
   /**
+   * Whether the background script found no VidGrab helper registered with Firefox.
+   * @returns {boolean} True when the backend state carries the helper_missing code.
+   */
+  content.helperMissing = function () {
+    return Boolean(content.backend && content.backend.code === YTDL.constants.HELPER_MISSING);
+  };
+
+  /**
+   * Build the one-line helper_missing message, with the download step inline so it is
+   * visible without hovering.
+   * @param {{error?: string|null, detail?: string|null}} [source] - Backend state or error result carrying the helper_missing code.
+   * @returns {string} For example "VidGrab helper not installed. Download VidGrab-helper and run it once."
+   */
+  content.helperMissingText = function (source) {
+    const error = (source && source.error) || YTDL.constants.HELPER_MISSING_ERROR;
+    const detail = (source && source.detail) || YTDL.constants.HELPER_MISSING_DETAIL;
+    return `${error}. ${detail}.`;
+  };
+
+  /**
+   * First-run yt-dlp/ffmpeg setup state of a reachable backend.
+   * @returns {{state: "installing"|"error", text: string}|null} Status from YTDL.format.setupStatus, or null when ready or unknown.
+   */
+  content.setupStatus = function () {
+    if (!content.backend || !content.backend.reachable) return null;
+    return YTDL.format.setupStatus(content.backend.health);
+  };
+
+  /**
    * Pull the video id out of any supported YouTube video URL.
    * @param {string} url - Watch, Shorts, embed or youtu.be URL.
    * @returns {string|null} The 11-character id, or null.

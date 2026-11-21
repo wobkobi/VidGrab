@@ -6,6 +6,8 @@ const saveStatus = document.getElementById("save-status");
 const testStatus = document.getElementById("test-status");
 const testButton = document.getElementById("test");
 const ffmpegHint = document.getElementById("ffmpeg-hint");
+const sizeHint = document.getElementById("size-hint");
+const customSizeLabel = document.getElementById("max-size-custom");
 
 const DEFAULT_FIELDS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate"];
 const SELECTOR_FIELDS = ["watchContainer", "watchInsertion", "shortsBar"];
@@ -16,6 +18,7 @@ const SELECT_OPTIONS = {
   container: constants.CONTAINERS,
   audio_format: constants.AUDIO_FORMATS,
   audio_bitrate: constants.AUDIO_BITRATES,
+  max_size: constants.MAX_SIZES,
   watchInsertion: constants.WATCH_INSERTIONS,
 };
 
@@ -67,13 +70,31 @@ function updateDependentFields() {
     label.classList.toggle("dimmed", label.dataset.for !== kind);
   }
   field("audio_bitrate").disabled = kind !== "audio" || field("audio_format").value !== "mp3";
+
+  // A max size always saves MP4: show it in the disabled container select and put the
+  // earlier choice back when the size is turned off
+  const choice = field("max_size").value;
+  const sized = kind === "video" && choice !== "0";
+  const container = field("container");
+  if (sized && !container.disabled) {
+    container.dataset.chosen = container.value;
+    container.value = "mp4";
+  } else if (!sized && container.disabled) {
+    container.value = container.dataset.chosen || container.value;
+  }
+  container.disabled = sized;
+  customSizeLabel.hidden = choice !== constants.MAX_SIZE_CUSTOM;
+  sizeHint.hidden = !sized;
+
   const needs = constants.NEEDS_FFMPEG({
     kind,
     quality: field("quality").value,
     audio_format: field("audio_format").value,
+    max_size_mb: choice === "0" ? 0 : 1,
   });
   ffmpegHint.hidden = !(needs && hasFfmpeg === false);
-  ffmpegHint.textContent = "ffmpeg was not found. This default needs it (MP3, or video above 720p); install ffmpeg or pick 720p or M4A.";
+  ffmpegHint.textContent =
+    "ffmpeg was not found. This default needs it (MP3, video above 720p, or a max size); install ffmpeg or pick 720p, M4A and no max size.";
 }
 
 /**
@@ -81,7 +102,11 @@ function updateDependentFields() {
  * @param {object} settings - Full settings object.
  */
 function fillForm(settings) {
+  field("container").disabled = false;
   for (const key of DEFAULT_FIELDS) field(key).value = settings.defaults[key];
+  const size = settings.defaults.max_size_mb;
+  field("max_size").value = constants.maxSizeChoice(size);
+  field("max_size_custom").value = field("max_size").value === constants.MAX_SIZE_CUSTOM ? String(size) : "";
   for (const key of SELECTOR_FIELDS) field(key).value = settings.selectors[key];
   field("concurrency").value = settings.concurrency;
   field("fragments").value = settings.fragments;
@@ -108,6 +133,12 @@ function readForm() {
   }
   const defaults = {};
   for (const key of DEFAULT_FIELDS) defaults[key] = field(key).value;
+  const maxSize = constants.maxSizeValue(field("max_size").value, field("max_size_custom").value);
+  if (maxSize === null) {
+    const {min, max} = constants.LIMITS.max_size_mb;
+    return {error: `Custom max size must be a whole number of MB from ${min} to ${max}.`};
+  }
+  defaults.max_size_mb = maxSize;
   const selectors = {};
   for (const key of SELECTOR_FIELDS) selectors[key] = field(key).value.trim();
   for (const key of ["watchContainer", "shortsBar"]) {
@@ -119,6 +150,8 @@ function readForm() {
   }
   return {
     settings: constants.mergeSettings({
+      // Built from the form, so it is current-version and a "first" placement is deliberate
+      version: constants.SETTINGS_VERSION,
       defaults,
       selectors,
       ...numbers,
@@ -188,7 +221,7 @@ async function testBackend() {
     updateDependentFields();
     setStatus(
       testStatus,
-      res.data.error || "Backend not running. Run python backend/install_native_host.py once and restart Firefox.",
+      res.data.error || "Helper not running. Download the VidGrab helper, run it once, then restart Firefox.",
       "bad",
     );
     return;
@@ -198,13 +231,14 @@ async function testBackend() {
   const parts = [
     `Backend v${health.version} running`,
     `yt-dlp ${health.yt_dlp_version}${health.update_available ? ` (update to ${health.yt_dlp_latest} available)` : ""}`,
-    health.ffmpeg ? "ffmpeg found" : "ffmpeg missing: MP3 and video above 720p are unavailable",
+    health.ffmpeg ? "ffmpeg found" : "ffmpeg missing: MP3, video above 720p and max size are unavailable",
   ];
   setStatus(testStatus, parts.join(" · "), health.ffmpeg ? "ok" : "bad");
 }
 
 form.addEventListener("change", (event) => {
-  if (["kind", "quality", "audio_format"].includes(event.target.id)) updateDependentFields();
+  if (["kind", "quality", "audio_format", "max_size"].includes(event.target.id)) updateDependentFields();
+  if (event.target.id === "max_size" && event.target.value === constants.MAX_SIZE_CUSTOM) field("max_size_custom").focus();
   setStatus(saveStatus, "Unsaved changes");
 });
 

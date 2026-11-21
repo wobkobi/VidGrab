@@ -7,14 +7,16 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   const content = YTDL.content;
   if (!content || !content.ready) return;
 
-  const { QUALITIES, CODECS, CONTAINERS, AUDIO_FORMATS, AUDIO_BITRATES, NEEDS_FFMPEG } = YTDL.constants;
+  const { QUALITIES, CODECS, SIZED_CODECS, CONTAINERS, AUDIO_FORMATS, AUDIO_BITRATES, MAX_SIZES, MAX_SIZE_CUSTOM, LIMITS } = YTDL.constants;
+  const { NEEDS_FFMPEG, HELPER_MISSING, maxSizeChoice, maxSizeValue } = YTDL.constants;
   const format = YTDL.format;
   const el = content.el;
 
   const VIEWPORT_MARGIN = 8;
   const ANCHOR_GAP = 6;
   const CLOSE_AFTER_SUCCESS_MS = 1200;
-  const OPTION_KEYS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate"];
+  const OPTION_KEYS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate", "max_size_mb"];
+  const SIZE_LIMITS = LIMITS.max_size_mb;
 
   // Map yt-dlp vcodec prefixes onto the codec preference values
   const CODEC_ALIASES = { avc1: "h264", avc: "h264", h264: "h264", vp09: "vp9", vp9: "vp9", av01: "av1", av1: "av1" };
@@ -86,7 +88,41 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     ui.quality = quality.select;
     ui.codec = codec.select;
     ui.container = container.select;
-    ui.videoSection = el("div", { className: "yt-dl-section" }, [quality.field, el("div", { className: "yt-dl-row" }, [codec.field, container.field])]);
+    const maxSize = selectField("Max size", "max_size");
+    const sizeErrorId = `yt-dl-size-error-${++idCounter}`;
+    const sizeInputId = `yt-dl-size-${idCounter}`;
+    ui.maxSize = maxSize.select;
+    ui.sizeInput = el("input", {
+      className: "yt-dl-input",
+      id: sizeInputId,
+      type: "number",
+      inputmode: "numeric",
+      min: String(SIZE_LIMITS.min),
+      max: String(SIZE_LIMITS.max),
+      step: "1",
+      placeholder: `${SIZE_LIMITS.min}-${SIZE_LIMITS.max}`,
+      autocomplete: "off",
+      "aria-describedby": sizeErrorId,
+    });
+    ui.sizeCustom = el("div", { className: "yt-dl-field", hidden: true }, [
+      el("label", { className: "yt-dl-label", for: sizeInputId, text: "Size (MB)" }),
+      ui.sizeInput,
+    ]);
+    ui.sizeError = el("p", { className: "yt-dl-hint yt-dl-hint-error", id: sizeErrorId });
+    ui.sizeHint = el("p", { className: "yt-dl-hint", hidden: true, text: "Converts to fit when no stream is small enough (slower, lower quality)" });
+    ui.av1Hint = el("p", {
+      className: "yt-dl-hint",
+      hidden: true,
+      text: "AV1 looks better at small sizes and converts slower. Some phones and older devices cannot play it.",
+    });
+    ui.videoSection = el("div", { className: "yt-dl-section" }, [
+      quality.field,
+      el("div", { className: "yt-dl-row" }, [codec.field, container.field]),
+      el("div", { className: "yt-dl-row" }, [maxSize.field, ui.sizeCustom]),
+      ui.sizeError,
+      ui.sizeHint,
+      ui.av1Hint,
+    ]);
 
     const audioFormat = selectField("Format", "audio_format");
     const bitrate = selectField("Bitrate", "audio_bitrate");
@@ -98,10 +134,51 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       ui.bitrateHint,
     ]);
 
+    if (mode === "video") {
+      const clipErrorId = `yt-dl-clip-error-${++idCounter}`;
+      const timeField = (label, placeholder) => {
+        const id = `yt-dl-clip-${label.toLowerCase()}-${++idCounter}`;
+        const input = el("input", {
+          className: "yt-dl-input",
+          id,
+          type: "text",
+          inputmode: "numeric",
+          placeholder,
+          autocomplete: "off",
+          spellcheck: "false",
+          "aria-describedby": clipErrorId,
+        });
+        const now = el("button", {
+          className: "yt-dl-btn yt-dl-btn-secondary yt-dl-btn-small",
+          type: "button",
+          text: "Now",
+          title: `Use the current playback time as the ${label.toLowerCase()}`,
+          "aria-label": `Set ${label.toLowerCase()} to the current playback time`,
+        });
+        const field = el("div", { className: "yt-dl-field" }, [
+          el("label", { className: "yt-dl-label", for: id, text: label }),
+          el("div", { className: "yt-dl-time" }, [input, now]),
+        ]);
+        return { field, input, now };
+      };
+      const start = timeField("Start", "0:00");
+      const end = timeField("End", "end");
+      ui.clipStart = start.input;
+      ui.clipEnd = end.input;
+      ui.clipStartNow = start.now;
+      ui.clipEndNow = end.now;
+      ui.clipError = el("p", { className: "yt-dl-hint yt-dl-hint-error", id: clipErrorId });
+      ui.clipSection = el("fieldset", { className: "yt-dl-section yt-dl-fieldset" }, [
+        el("legend", { className: "yt-dl-label" }, ["Clip ", el("span", { className: "yt-dl-muted", text: "(optional)" })]),
+        el("div", { className: "yt-dl-row" }, [start.field, end.field]),
+        ui.clipError,
+      ]);
+    }
+
     ui.ffmpegHint = el("p", {
       className: "yt-dl-hint yt-dl-hint-warn",
       hidden: true,
-      text: "ffmpeg was not found, so qualities above 720p and MP3 are unavailable. Install ffmpeg and restart the backend.",
+      text: "ffmpeg was not found, so qualities above 720p, max size, clips and MP3 are unavailable. The helper sets ffmpeg up by itself; check the toolbar popup for setup errors.",
     });
 
     if (mode === "list") {
@@ -145,6 +222,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         toggle,
         ui.videoSection,
         ui.audioSection,
+        ui.clipSection || null,
         ui.ffmpegHint,
         ui.listSection || null,
         el("div", { className: "yt-dl-panel-footer" }, [ui.saveBtn, ui.downloadBtn]),
@@ -234,12 +312,30 @@ ${detail}`);
     ui.videoSection.hidden = !isVideo;
     ui.audioSection.hidden = isVideo;
 
+    // Size first: with ffmpeg missing it falls back to Off, which re-enables the qualities below
+    const sizeBlocked = !allowed({ ...options, kind: "video", max_size_mb: SIZE_LIMITS.min });
+    const sizes = MAX_SIZES.map((s) => ({ ...s, disabled: s.value !== "0" && sizeBlocked }));
+    fillSelect(ui.maxSize, sizes, state.sizeChoice);
+    state.sizeChoice = ui.maxSize.value;
+    const custom = state.sizeChoice === MAX_SIZE_CUSTOM;
+    options.max_size_mb = maxSizeValue(state.sizeChoice, ui.sizeInput.value) || 0;
+    const sized = custom || options.max_size_mb > 0;
+    ui.sizeCustom.hidden = !custom;
+    ui.sizeHint.hidden = !sized;
+
     fillSelect(ui.quality, qualityOptions(), options.quality);
     options.quality = ui.quality.value;
-    fillSelect(ui.codec, codecOptions(), options.codec);
-    options.codec = ui.codec.value;
-    fillSelect(ui.container, CONTAINERS, options.container);
-    options.container = ui.container.value;
+    // With a max size the codec is the one the file is converted to (or picked in), so only
+    // H.264 and AV1 make sense; the plain preference comes back when the size is turned off
+    fillSelect(ui.codec, sized ? SIZED_CODECS : codecOptions(), sized && options.codec !== "av1" ? "any" : options.codec);
+    if (!sized || ui.codec.value === "av1") options.codec = ui.codec.value;
+    ui.av1Hint.hidden = !(sized && options.codec === "av1");
+    // A max size always saves MP4: show that, but keep the chosen container for when it is turned off
+    fillSelect(ui.container, CONTAINERS, sized ? "mp4" : options.container);
+    if (!sized) options.container = ui.container.value;
+    ui.container.disabled = sized;
+    if (sized) ui.container.title = "Max size always saves MP4";
+    else ui.container.removeAttribute("title");
 
     const formats = AUDIO_FORMATS.map((f) => ({ ...f, disabled: !allowed({ ...options, kind: "audio", audio_format: f.value }) }));
     fillSelect(ui.audioFormat, formats, options.audio_format);
@@ -251,8 +347,15 @@ ${detail}`);
     ui.bitrateHint.hidden = !lossless;
 
     ui.ffmpegHint.hidden = state.ffmpeg !== false;
-    ui.saveBtn.disabled = state.busy;
-    ui.downloadBtn.disabled = state.busy || !allowed(options) || !rangeValid();
+    const sizeOk = sizeValid();
+    const clipOk = clipValid();
+    if (ui.clipSection) {
+      const playing = Boolean(playerVideo());
+      ui.clipStartNow.hidden = !playing;
+      ui.clipEndNow.hidden = !playing;
+    }
+    ui.saveBtn.disabled = state.busy || !sizeOk;
+    ui.downloadBtn.disabled = state.busy || !allowed(options) || !rangeValid() || !sizeOk || !clipOk;
 
     if (state.mode === "list") {
       const count = state.info && typeof state.info.entry_count === "number" ? state.info.entry_count : null;
@@ -293,6 +396,95 @@ ${detail}`);
   }
 
   /**
+   * Validate the custom max size field and update its error text.
+   * @returns {boolean} True unless a video download has Custom chosen with an invalid size.
+   */
+  function sizeValid() {
+    const ui = state.ui;
+    if (state.options.kind !== "video" || state.sizeChoice !== MAX_SIZE_CUSTOM) {
+      ui.sizeInput.removeAttribute("aria-invalid");
+      ui.sizeError.textContent = "";
+      return true;
+    }
+    const valid = maxSizeValue(MAX_SIZE_CUSTOM, ui.sizeInput.value) !== null;
+    // Same as the range field: no error for an empty field until the user has typed
+    const shown = valid || (!ui.sizeInput.value && !state.sizeTouched) ? "" : `Enter a whole number of MB from ${SIZE_LIMITS.min} to ${SIZE_LIMITS.max}`;
+    ui.sizeError.textContent = shown;
+    if (shown) ui.sizeInput.setAttribute("aria-invalid", "true");
+    else ui.sizeInput.removeAttribute("aria-invalid");
+    return valid;
+  }
+
+  /**
+   * Read the clip fields into state.options and update their error text. Empty fields mean
+   * the start and the end of the video.
+   * @returns {boolean} True when there is no clip field or both fields are usable.
+   */
+  function clipValid() {
+    const { ui, options } = state;
+    options.clip_start = 0;
+    options.clip_end = 0;
+    if (!ui.clipSection) return true;
+    const rawStart = ui.clipStart.value.trim();
+    const rawEnd = ui.clipEnd.value.trim();
+    const start = rawStart ? format.parseTime(rawStart) : 0;
+    const end = rawEnd ? format.parseTime(rawEnd) : 0;
+    const duration = state.info && Number(state.info.duration) > 0 ? Number(state.info.duration) : 0;
+    let message = "";
+    let bad = null;
+    if (start === null || end === null) {
+      message = "Use m:ss or h:mm:ss, e.g. 1:30";
+      bad = start === null ? ui.clipStart : ui.clipEnd;
+    } else if (end && end <= start) {
+      message = "End must be after start";
+      bad = ui.clipEnd;
+    } else if (duration && start >= duration) {
+      message = `This video is only ${format.clock(duration)} long`;
+      bad = ui.clipStart;
+    }
+    ui.clipError.textContent = message;
+    for (const input of [ui.clipStart, ui.clipEnd]) {
+      if (input === bad) input.setAttribute("aria-invalid", "true");
+      else input.removeAttribute("aria-invalid");
+    }
+    if (message) return false;
+    // An end at or past the video's end is the same as no end
+    options.clip_start = start;
+    options.clip_end = duration && end >= duration ? 0 : end;
+    return true;
+  }
+
+  /**
+   * Find the page's playing video for the "Now" buttons: the largest visible video element,
+   * which is the main player on a watch page and the active Short on Shorts.
+   * @returns {HTMLVideoElement|null} The player, or null when the page has none.
+   */
+  function playerVideo() {
+    let best = null;
+    let bestArea = 0;
+    for (const video of document.querySelectorAll("video")) {
+      const rect = video.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area > bestArea && Number.isFinite(video.duration)) {
+        best = video;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Fill a clip field with the player's current time.
+   * @param {HTMLInputElement} input - Start or end field.
+   */
+  function useCurrentTime(input) {
+    const video = playerVideo();
+    if (!video) return;
+    input.value = format.clock(video.currentTime);
+    render();
+  }
+
+  /**
    * Fetch /info and backend health for the open panel, ignoring results from an older open.
    */
   async function loadInfo() {
@@ -316,6 +508,8 @@ ${detail}`);
       state.info = infoRes.data;
       if (infoRes.data && infoRes.data.title) state.ui.title.textContent = infoRes.data.title;
       setStatus("");
+    } else if (infoRes.code === HELPER_MISSING) {
+      setStatus(content.helperMissingText(infoRes), "error");
     } else {
       const down = healthRes.ok && healthRes.data && healthRes.data.reachable === false;
       setStatus(down ? "Backend not running. Download will try to start it." : infoRes.error || "Could not load details", "error", infoRes.detail);
@@ -330,6 +524,19 @@ ${detail}`);
   function currentOptions() {
     const out = {};
     for (const key of OPTION_KEYS) out[key] = state.options[key];
+    if (out.kind === "video" && out.max_size_mb > 0) out.container = "mp4";
+    return out;
+  }
+
+  /**
+   * The options for a download: {@link currentOptions} plus the clip, which is never saved
+   * as a default because it only fits the one video.
+   * @returns {object} Download options.
+   */
+  function jobOptions() {
+    const out = currentOptions();
+    if (state.options.clip_start > 0) out.clip_start = state.options.clip_start;
+    if (state.options.clip_end > 0) out.clip_end = state.options.clip_end;
     return out;
   }
 
@@ -340,6 +547,12 @@ ${detail}`);
    */
   async function download() {
     if (!state || state.busy || !allowed(state.options)) return;
+    if (!sizeValid()) {
+      state.sizeTouched = true;
+      sizeValid();
+      state.ui.sizeInput.focus();
+      return;
+    }
     if (!rangeValid()) {
       state.rangeTouched = true;
       rangeValid();
@@ -358,12 +571,13 @@ ${detail}`);
       if (!started.ok || !started.data || !started.data.reachable) {
         state.busy = false;
         render();
-        setStatus((started.data && started.data.error) || "Backend not running. Check the README setup steps.", "error");
+        if (started.data && started.data.code === HELPER_MISSING) setStatus(content.helperMissingText(started.data), "error");
+        else setStatus((started.data && started.data.error) || "Backend not running. Check the README setup steps.", "error");
         return;
       }
     }
 
-    const message = { type: "createJobs", url: state.url, options: currentOptions() };
+    const message = { type: "createJobs", url: state.url, options: jobOptions() };
     if (state.mode === "list" && state.ui.rangeRadio.checked) {
       message.items = format.parseRange(state.ui.rangeInput.value.trim());
     }
@@ -372,7 +586,8 @@ ${detail}`);
     if (!res.ok) {
       state.busy = false;
       render();
-      setStatus(res.error || "Download failed to start", "error", res.detail);
+      if (res.code === HELPER_MISSING) setStatus(content.helperMissingText(res), "error");
+      else setStatus(res.error || "Download failed to start", "error", res.detail);
       return;
     }
     // Stay busy until the panel closes so a second click or Enter cannot queue it again
@@ -496,11 +711,34 @@ ${detail}`);
     ui.container.addEventListener("change", () => setOption("container", ui.container.value));
     ui.audioFormat.addEventListener("change", () => setOption("audio_format", ui.audioFormat.value));
     ui.bitrate.addEventListener("change", () => setOption("audio_bitrate", ui.bitrate.value));
+    ui.maxSize.addEventListener("change", () => {
+      state.sizeChoice = ui.maxSize.value;
+      render();
+      if (state.sizeChoice === MAX_SIZE_CUSTOM) ui.sizeInput.focus();
+    });
+    ui.sizeInput.addEventListener("input", () => {
+      state.sizeTouched = true;
+      render();
+    });
+    ui.sizeInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") download();
+    });
     ui.downloadBtn.addEventListener("click", download);
     ui.saveBtn.addEventListener("click", saveDefault);
     ui.root.addEventListener("keydown", isolateKeys);
     ui.root.addEventListener("keyup", isolateKeys);
     ui.root.addEventListener("keypress", isolateKeys);
+
+    if (ui.clipSection) {
+      for (const input of [ui.clipStart, ui.clipEnd]) {
+        input.addEventListener("input", render);
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") download();
+        });
+      }
+      ui.clipStartNow.addEventListener("click", () => useCurrentTime(ui.clipStart));
+      ui.clipEndNow.addEventListener("click", () => useCurrentTime(ui.clipEnd));
+    }
 
     if (state.mode === "list") {
       const onRadio = () => {
@@ -571,7 +809,10 @@ ${detail}`);
       ffmpeg: null,
       busy: false,
       rangeTouched: false,
+      sizeChoice: maxSizeChoice(content.settings.defaults.max_size_mb),
+      sizeTouched: false,
     };
+    if (state.sizeChoice === MAX_SIZE_CUSTOM) ui.sizeInput.value = String(content.settings.defaults.max_size_mb);
 
     bindEvents();
     setStatus("");

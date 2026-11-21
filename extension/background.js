@@ -1,9 +1,11 @@
 // Background script: the only HTTP client of the backend. Routes runtime messages, polls
 // the job queue, broadcasts jobsUpdated, drives the badge and desktop notifications.
-const {constants, api} = YTDL;
+const {constants, api, format} = YTDL;
 
-const NATIVE_HOST = "yt_dl_backend";
+const NATIVE_HOST = "vidgrab";
 const POLL_ACTIVE_MS = 1000;
+// Poll (and refresh /health) this often while the helper downloads yt-dlp and ffmpeg
+const POLL_SETUP_MS = 2000;
 const POLL_IDLE_MS = 30000;
 const HEALTH_REFRESH_MS = 30000;
 const START_RETRY_MS = 5000;
@@ -14,13 +16,14 @@ const INFO_CACHE_MAX = 50;
 const TOKEN_RETRY_MS = 10000;
 const NOTIFICATION_PREFIX = "ytdl-job:";
 const GROUP_NOTIFICATION_PREFIX = "ytdl-group:";
-const NO_TOKEN_ERROR =
-  "Could not get the backend key from the native host. Run python backend/install_native_host.py once and restart Firefox.";
-const FOREIGN_ERROR = "Another program is using port 18956 and is not the yt-dl backend.";
+const NO_TOKEN_ERROR = "Could not get the backend key from the VidGrab helper. Run the helper once and restart Firefox.";
+const FOREIGN_ERROR = "Another program is using the helper's port and is not the VidGrab helper.";
 const JOB_ACTIONS = new Set(["pause", "resume", "cancel", "retry", "open", "reveal"]);
 const ACTIVE = new Set(constants.ACTIVE_STATUSES);
 
-const state = {jobs: [], backend: {reachable: false, health: null, error: null}};
+// `code` names a known failure the UI handles specially (constants.HELPER_MISSING), with
+// `detail` as the user-facing next step.
+const state = {jobs: [], backend: {reachable: false, health: null, error: null, code: null, detail: null}};
 // True while ensureBackend runs (and before the first attempt), so the UI can say
 // "Starting backend..." instead of "Backend not running" during a normal start.
 let backendStarting = true;
@@ -37,6 +40,8 @@ let pollQueued = false;
 let ensurePromise = null;
 let tokenPromise = null;
 let lastTokenAt = 0;
+// Code from the last failed native host call (constants.nativeErrorCode), null after a reply
+let nativeError = null;
 let autoUpdateTried = false;
 let autoUpdateChecking = false;
 const infoCache = new Map();
@@ -61,12 +66,23 @@ function activeCount(jobs) {
 
 /**
  * Snapshot the backend state in the shape the runtime messages use. `reachable` is null
- * while a start attempt is still running, and `error` explains a known cause of failure.
- * @returns {{reachable: boolean|null, health: object|null, error: string|null}} Copy of the backend state.
+ * while a start attempt is still running, `error` explains a known cause of failure and
+ * `code`/`detail` mark the helper_missing case.
+ * @returns {{reachable: boolean|null, health: object|null, error: string|null, code: string|null, detail: string|null}} Copy of the backend state.
  */
 function backendSnapshot() {
   const reachable = state.backend.reachable ? true : backendStarting ? null : false;
-  return {reachable, health: state.backend.health, error: state.backend.error};
+  const {health, error} = state.backend;
+  return {reachable, health, error, code: state.backend.code || null, detail: state.backend.detail || null};
+}
+
+/**
+ * Whether the backend is still downloading yt-dlp and ffmpeg on first run.
+ * @returns {boolean} True while /health.tools.state is "installing".
+ */
+function toolsInstalling() {
+  const setup = state.backend.reachable ? format.setupStatus(state.backend.health) : null;
+  return Boolean(setup && setup.state === "installing");
 }
 
 /**
@@ -91,12 +107,14 @@ async function callNativeHost() {
   lastTokenAt = Date.now();
   try {
     const reply = await browser.runtime.sendNativeMessage(NATIVE_HOST, {command: "start"});
+    nativeError = null;
     if (reply && reply.status === "error") console.warn("[yt-dl] Native host:", reply.detail);
     if (!reply || typeof reply.token !== "string" || !reply.token) return false;
     api.setToken(reply.token);
+    api.setPort(reply.port);
     return true;
   } catch (err) {
-    // Usually the native host is not installed
+    nativeError = constants.nativeErrorCode(err);
     console.warn("[yt-dl] Native host unavailable:", err && err.message);
     return false;
   }
@@ -178,7 +196,16 @@ async function refreshHealth() {
   const wasReachable = state.backend.reachable;
   lastHealthAt = Date.now();
   if (!api.hasToken()) {
-    state.backend = {reachable: false, health: null, error: NO_TOKEN_ERROR};
+    state.backend =
+      nativeError === constants.HELPER_MISSING
+        ? {
+            reachable: false,
+            health: null,
+            error: constants.HELPER_MISSING_ERROR,
+            code: constants.HELPER_MISSING,
+            detail: constants.HELPER_MISSING_DETAIL,
+          }
+        : {reachable: false, health: null, error: NO_TOKEN_ERROR};
     return backendSnapshot();
   }
   const nonce = api.newNonce();
@@ -338,13 +365,19 @@ function publish() {
 }
 
 /**
- * Schedule the next poll: every second while anything is active, otherwise every 30s
- * (the heartbeat that keeps the idle-timeout backend alive).
- * @param {number} [ms] - Explicit delay; defaults to the active/idle interval.
+ * Schedule the next poll: every second while anything is active, every 2s while the
+ * helper sets up yt-dlp and ffmpeg, otherwise every 30s (the heartbeat that keeps the
+ * idle-timeout backend alive).
+ * @param {number} [ms] - Explicit delay; defaults to the active/setup/idle interval.
  */
 function schedulePoll(ms) {
   clearTimeout(pollTimer);
-  const wait = ms !== undefined ? ms : activeCount(state.jobs) > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+  let wait = ms;
+  if (wait === undefined) {
+    if (activeCount(state.jobs) > 0) wait = POLL_ACTIVE_MS;
+    else if (toolsInstalling()) wait = POLL_SETUP_MS;
+    else wait = POLL_IDLE_MS;
+  }
   pollTimer = setTimeout(poll, wait);
 }
 
@@ -360,8 +393,11 @@ async function poll() {
   polling = true;
   clearTimeout(pollTimer);
   try {
-    // Health first: job requests carry the token, so they only go to a verified backend
-    if (!state.backend.reachable || Date.now() - lastHealthAt > HEALTH_REFRESH_MS) await refreshHealth();
+    // Health first: job requests carry the token, so they only go to a verified backend.
+    // During first-run setup it is refreshed on every poll to track the progress.
+    if (!state.backend.reachable || toolsInstalling() || Date.now() - lastHealthAt > HEALTH_REFRESH_MS) {
+      await refreshHealth();
+    }
     const res = state.backend.reachable ? await authed(() => api.listJobs()) : {ok: false};
     if (res.ok) {
       const jobs = res.data && Array.isArray(res.data.jobs) ? res.data.jobs : [];
@@ -385,22 +421,50 @@ async function poll() {
 }
 
 /**
+ * Turn a failed start into an API-style error, keeping the helper_missing code and detail.
+ * @param {{error: string|null, code: string|null, detail: string|null}} backend - Snapshot from {@link ensureBackend}.
+ * @returns {{ok: false, error: string, code?: string, detail?: string}} Error result.
+ */
+function startFailure(backend) {
+  const res = {ok: false, error: backend.error || api.NOT_RUNNING};
+  if (backend.code) res.code = backend.code;
+  if (backend.detail) res.detail = backend.detail;
+  return res;
+}
+
+/**
+ * Replace the backend's generic 503 "Setting up yt-dlp and ffmpeg" with the current
+ * progress, and refresh health so polling switches to the setup interval.
+ * @param {object} res - API result with status 503.
+ * @returns {Promise<object>} The result, with the progress text when setup is running.
+ */
+async function withSetupProgress(res) {
+  await refreshHealth();
+  poll();
+  const setup = state.backend.reachable ? format.setupStatus(state.backend.health) : null;
+  return setup ? {...res, error: setup.text} : res;
+}
+
+/**
  * Run a backend call against a verified backend, starting it first when it is not known
- * to be up; when nothing answers, start the backend once and retry.
+ * to be up; when nothing answers, start the backend once and retry. A 503 during first-run
+ * setup comes back with the setup progress as its message.
  * @param {() => Promise<object>} call - API call returning {ok, data} or {ok: false, error, status}.
  * @returns {Promise<object>} The API result.
  */
 async function withBackend(call) {
   if (!state.backend.reachable) {
     const backend = await ensureBackend();
-    if (!backend.reachable) return {ok: false, error: backend.error || api.NOT_RUNNING};
+    if (!backend.reachable) return startFailure(backend);
   }
   const first = await authed(call);
+  if (first.status === 503) return withSetupProgress(first);
   if (first.ok || first.status) return first;
   state.backend = {reachable: false, health: null, error: null};
   const backend = await ensureBackend();
-  if (!backend.reachable) return {ok: false, error: backend.error || api.NOT_RUNNING};
-  return authed(call);
+  if (!backend.reachable) return startFailure(backend);
+  const second = await authed(call);
+  return second.status === 503 ? withSetupProgress(second) : second;
 }
 
 /**

@@ -1,0 +1,123 @@
+# Publishes a release whenever a merge into main brings a manifest version that isn't released
+# yet. Merges that leave the version alone (CI or docs only) stop after the first step, so only
+# changes to the add-on or helper reach installed copies. AMO refuses to sign a version twice,
+# which is another reason a release needs a version bump.
+#
+# Signing needs the AMO API key and secret (addons.mozilla.org > Developer Hub > Manage API
+# Keys) in the WEB_EXT_API_KEY and WEB_EXT_API_SECRET repository secrets. Firefox finds the new
+# version through updates.json on the latest release, which the manifest's update_url names.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  # Run by hand from the Actions tab. A dry run builds and signs on GitHub's runners without
+  # publishing, to prove a release would work before merging. AMO still records the signed
+  # version, so bump it again before the real release.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign only, without publishing
+        type: boolean
+        default: false
+
+# Releases run one at a time, in merge order
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for an unreleased version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Dry run of v$version: building and signing without publishing."
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version is already released, nothing to do."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version isn't released yet."
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+
+      - name: Test
+        if: steps.version.outputs.new == 'true'
+        run: |
+          (cd helper && go test ./...)
+          node --test extension/tests
+
+      - name: Sign the add-on (unlisted)
+        if: steps.version.outputs.new == 'true'
+        # web-ext reads WEB_EXT_API_KEY and WEB_EXT_API_SECRET from the environment itself
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+            echo "::error::The WEB_EXT_API_KEY or WEB_EXT_API_SECRET secret is missing, so the add-on can't be signed."
+            exit 1
+          fi
+          npx --yes web-ext@8.3.0 sign -s extension --channel unlisted \
+            --artifacts-dir "$RUNNER_TEMP/signed"
+          mkdir -p release
+          mv "$RUNNER_TEMP"/signed/*.xpi "release/vidgrab-$VERSION.xpi"
+
+      - name: Build the helpers
+        if: steps.version.outputs.new == 'true'
+        run: |
+          node scripts/build-helper.mjs
+          cp dist/vidgrab-* release/
+
+      # update_hash lets Firefox check the download before installing it
+      - name: Write updates.json
+        if: steps.version.outputs.new == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          hash=$(sha256sum "release/vidgrab-$VERSION.xpi" | cut -d' ' -f1)
+          node -e '
+            const [version, repo, hash] = process.argv.slice(1);
+            const update = {
+              version,
+              update_link: `https://github.com/${repo}/releases/download/v${version}/vidgrab-${version}.xpi`,
+              update_hash: `sha256:${hash}`,
+            };
+            const manifest = { addons: { "yt-dl-firefox@local": { updates: [update] } } };
+            require("fs").writeFileSync("release/updates.json", JSON.stringify(manifest, null, 2));
+          ' "$VERSION" "$REPO" "$hash"
+
+      - name: Publish
+        if: steps.version.outputs.new == 'true' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" release/* \
+            --target "$GITHUB_SHA" --title "VidGrab $VERSION" --generate-notes

@@ -61,6 +61,11 @@ h2 {
   margin-bottom: 16px;
 }
 
+/* .hint and .grid label set display, which would otherwise override the hidden attribute */
+[hidden] {
+  display: none !important;
+}
+
 .hint {
   display: block;
   color: var(--muted);

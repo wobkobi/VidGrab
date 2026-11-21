@@ -58,6 +58,9 @@ html[dark] .yt-dl-panel {
 .yt-dl-label-text {
   position: relative;
   max-width: 220px;
+  /* Equal-width digits so "9%" > "10%" doesn't jiggle; watch.js holds the min-width during a job */
+  font-variant-numeric: tabular-nums;
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -73,6 +76,13 @@ html[dark] .yt-dl-panel {
   margin-right: 8px;
   position: relative;
   vertical-align: middle;
+}
+
+/* After the like/dislike pill: gap on the left instead, so the button doesn't touch the pill
+   (or the Return YouTube Dislike ratio bar under it) */
+.yt-dl-split[data-yt-dl-placement="last"] {
+  margin-left: 8px;
+  margin-right: 0;
 }
 
 .yt-dl-main,
@@ -136,6 +146,47 @@ html[dark] .yt-dl-panel {
 
 .yt-dl-arrow[aria-expanded="true"] .yt-dl-chevron {
   transform: rotate(180deg);
+}
+
+/* While a job is active the arrow cancels it, so it shows a cross instead of the chevron */
+.yt-dl-cross {
+  display: none;
+  position: relative;
+  width: 10px;
+  height: 10px;
+}
+
+.yt-dl-cross::before,
+.yt-dl-cross::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: -1px;
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+.yt-dl-cross::after {
+  transform: rotate(-45deg);
+}
+
+.yt-dl-split[data-cancel="true"] .yt-dl-chevron {
+  display: none;
+}
+
+.yt-dl-split[data-cancel="true"] .yt-dl-cross {
+  display: block;
+}
+
+.yt-dl-split[data-cancel="true"] .yt-dl-arrow:hover {
+  color: var(--yt-dl-error);
+}
+
+.yt-dl-compact .yt-dl-cross {
+  transform: scale(0.8);
 }
 
 /* Progress fill behind the label, width driven by --yt-dl-progress from watch.js */
@@ -228,13 +279,24 @@ html[dark] .yt-dl-panel {
 
 /* Playlist and channel header button */
 
+.yt-dl-list-box {
+  display: inline-flex;
+  flex: none;
+  vertical-align: middle;
+}
+
+/* Height and radius are overwritten by lists.js to match YouTube's buttons in the same row */
 .yt-dl-list-btn {
   flex: none;
   height: 36px;
   padding: 0 16px 0 12px;
   margin: 0 0 0 8px;
   border-radius: 18px;
-  vertical-align: middle;
+}
+
+/* In YouTube's action row the copied slot class supplies the spacing */
+.yt-dl-list-box[data-yt-dl-slot="true"] .yt-dl-list-btn {
+  margin: 0;
 }
 
 /* Panel */
@@ -395,6 +457,21 @@ html[dark] .yt-dl-panel {
 }
 
 .yt-dl-select:disabled,
+.yt-dl-time {
+  display: flex;
+  gap: 4px;
+}
+
+.yt-dl-time > .yt-dl-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.yt-dl-btn-small {
+  flex: none;
+  padding: 0 10px;
+}
+
 .yt-dl-input:disabled {
   opacity: 0.5;
 }

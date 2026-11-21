@@ -1,0 +1,68 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+  # Only main, so a branch with an open pull request is not checked twice: the
+  # pull_request event already covers every push to that branch.
+  push:
+    branches: [main]
+
+# Supersede a run when its ref is pushed again. Grouping by ref keeps branches
+# from cancelling each other, and a cancelled run reports "cancelled" rather
+# than "success", so the auto-merge workflow ignores it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helper:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+
+      - name: Vet
+        working-directory: helper
+        run: go vet ./...
+
+      # Fakes the network and yt-dlp, so no tools are downloaded
+      - name: Test
+        working-directory: helper
+        run: go test ./...
+
+      # Dependabot pull requests are built too, and auto-merge queues patch and
+      # minor bumps, so this is the signal that a bump still compiles for every
+      # platform the release ships.
+      - name: Build all helpers
+        run: node scripts/build-helper.mjs
+
+  extension:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Test
+        run: node --test extension/tests
+
+      # --self-hosted: the add-on is signed unlisted and updates through its own
+      # update_url, which the default (AMO-listed) rules reject.
+      - name: Lint
+        run: npx --yes web-ext@8.3.0 lint -s extension --self-hosted

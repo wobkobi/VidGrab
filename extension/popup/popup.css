@@ -88,6 +88,15 @@ body {
   background: var(--bad);
 }
 
+.dot.busy {
+  background: var(--warn);
+}
+
+#status-meta a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .btn {
   font: inherit;
   font-size: 12px;
