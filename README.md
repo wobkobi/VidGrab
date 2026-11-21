@@ -1,6 +1,6 @@
 # VidGrab
 
-A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.6.0.
+A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.6.1.
 
 ## What it does
 
@@ -17,8 +17,8 @@ Every file gets embedded tags: title, channel (as artist), upload date, descript
 
 ## Requirements
 
-- Firefox 140 or newer.
-- Windows 10 or 11, macOS or Linux, on x64 or ARM64. Only Windows has been tested so far; the macOS and Linux builds compile and pass the unit tests but have not been run for real.
+- Firefox 142 or newer.
+- Windows 10 or 11 (x64, or ARM through Windows' x64 emulation), macOS (Apple silicon or Intel) or Linux (x64). Only Windows has been tested so far; the macOS and Linux builds compile and pass the unit tests but have not been run for real.
 - An internet connection on first run, when the helper downloads yt-dlp (about 25 MB) and, if ffmpeg is not already installed, ffmpeg (about 100 MB).
 
 ## Setup
@@ -27,9 +27,9 @@ Every file gets embedded tags: title, channel (as artist), upload date, descript
 
    | System | File |
    |---|---|
-   | Windows | `vidgrab-windows-amd64.exe` (`-arm64` on ARM PCs) |
+   | Windows | `vidgrab-windows-amd64.exe` (ARM PCs too) |
    | macOS | `vidgrab-macos-arm64` (Apple silicon) or `vidgrab-macos-amd64` (Intel) |
-   | Linux | `vidgrab-linux-amd64` or `vidgrab-linux-arm64` |
+   | Linux | `vidgrab-linux-amd64` |
 
 2. Run it once.
    - **Windows**: double-click it. The helper is not code-signed yet, so SmartScreen may say "Windows protected your PC"; click **More info > Run anyway**.
@@ -54,18 +54,18 @@ Firefox installed as a Snap or Flatpak on Linux cannot start programs outside it
 
 ### Installing the add-on
 
-Install [VidGrab from addons.mozilla.org](https://addons.mozilla.org/firefox/addon/vidgrab/). Firefox then updates it by itself. The helper downloads for every system are on the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
+Install [VidGrab for YouTube from addons.mozilla.org](https://addons.mozilla.org/firefox/addon/vidgrab/). Firefox then updates it by itself. The helper downloads for every system are on the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
 
 For development, temporary add-ons (`about:debugging#/runtime/this-firefox` > **Load Temporary Add-on...** > `extension\manifest.json`) are removed when Firefox restarts. To keep it installed, either:
 
-- Use Firefox Developer Edition or Nightly, set `xpinstall.signatures.required` to `false` in `about:config`, then run `npx web-ext build -s extension` and install the `.zip` from `about:addons` > gear menu > **Install Add-on From File...**; or
+- Use Firefox Developer Edition or Nightly, set `xpinstall.signatures.required` to `false` in `about:config`, then run `node scripts/build-xpi.mjs` and install the unsigned `dist/vidgrab-<version>.xpi` from `about:addons` > gear menu > **Install Add-on From File...** (regular Firefox refuses unsigned add-ons); or
 - Sign it as an unlisted add-on with your AMO API keys: `npx web-ext sign -s extension --channel unlisted --api-key ... --api-secret ...`, then install the signed `.xpi` in normal Firefox. Each signing needs a new version in `manifest.json`.
 
 The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Firefox registration only allows that id.
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, submits the add-on to AMO as a listed version, builds the six helpers, and creates the `v<version>` GitHub release with the helpers and `updates.json`. AMO reviews the version and Firefox updates installed copies from AMO once it is approved; `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
+Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, submits the add-on to AMO as a listed version, builds the four helpers, and creates the `v<version>` GitHub release with the helpers and `updates.json`. AMO reviews the version and Firefox updates installed copies from AMO once it is approved; `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
 
 ## Usage
 
@@ -73,7 +73,7 @@ Firefox starts the helper when the add-on needs it. While Firefox is open the ad
 
 - **Watch page**: a split button sits next to Like. The main part downloads straight away with your default options and then shows live progress (a percentage with a fill behind it), "Done", or an error you can click to retry. While a download is queued, running, converting or paused, the arrow turns into an X that cancels it. The download runs in the helper, so you can leave the page or close the tab once it has started; the popup keeps showing it. Otherwise the arrow opens the panel: Video or Audio, quality (with size estimates), codec, container, MP3/M4A and bitrate. Use **Save as default** to change what the main button does.
 - **Shorts**: the same button appears in the Shorts action bar.
-- **Three-dot menu**: on the home page, search results, related videos and playlists, a video's menu has a **Download** item that downloads it with your default options. A notice in the bottom-left corner confirms it; progress is in the popup.
+- **Three-dot menu**: on the home page, search results, related videos and playlists, a video's menu has a **Download with VidGrab** item (with the red VidGrab icon, apart from YouTube's own Download) that downloads it with your default options. A notice in the bottom-left corner confirms it; progress is in the popup.
 - **Sound in MP4**: MP4 downloads prefer AAC sound. When a site only has sound MP4 players handle badly (Opus, Vorbis, FLAC), the sound is re-encoded to AAC (160 kbps stereo, 128 mono, 64 per channel for surround) and the picture is copied untouched.
 - **Clips**: on a single video, fill in **Start** and/or **End** in the panel (`1:30`, `1:02:05` or plain seconds; an empty start means the beginning and an empty end the end of the video). **Now** next to each field takes the player's current time. Only that part is downloaded, cut on the exact second (ffmpeg re-encodes the cut), and saved as `Title (1m30s-4m05s).mp4` or `.mp3`, so a clip never replaces the whole video or another clip. Clips combine with **Max size**, which then only has to fit the clip, the easy way to get a sharp Discord upload out of a long video. A clip is never saved as a default.
 - **Size limit (Discord)**: set **Max size** in the panel (for example 20 MB, the free Discord limit) and the video is saved as an H.264 + AAC MP4 that fits, named `Title (20 MB).mp4` so it never replaces a normal download of the same video (an existing file of that name gets ` (2)`, ` (3)` and so on). When YouTube already has H.264 + AAC streams small enough, at least as sharp as a conversion would be, they are downloaded as they are; otherwise the best source up to a suitable resolution is downloaded and re-encoded to H.264 + AAC at the bitrate that fits. The finished download is measured either way: one that fits is kept as it is, one that came out too big is converted. With a max size set, **Codec** offers H.264 (plays everywhere) or AV1: AV1 looks clearly better at the same size (on a music video at 20 MB for 24 minutes it scored VMAF 29 against 13 for the best H.264, and at 770 kbps 89 against 76) and encodes slower, but some phones and older devices cannot play it. An AV1 download keeps YouTube's own AV1 or H.264 streams when they fit, and otherwise converts with SVT-AV1. The job shows "converting" with its own progress while it encodes. Pausing during the conversion keeps the download and restarts the conversion on resume; if the helper exits first, the half-done work is deleted. A video too long to fit even at 50 kbps of video (10 fps, with 32 kbps mono sound) fails with the longest length that would fit.
@@ -157,7 +157,7 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 
 `tools.state` is `installing`, `ready` or `error`. Option values: `kind` video or audio; `quality` best, 2160, 1440, 1080, 720, 480 or 360; `codec` any, h264, vp9 or av1; `container` mp4 or mkv; `audio_format` mp3 or m4a; `audio_bitrate` 320, 192 or 128. `max_size_mb` 0 (off, the default) or 1 to 4000; it applies to video only, forces MP4 and needs ffmpeg (422 without it); with it, `codec` av1 converts to AV1 and every other value to H.264. `clip_start` and `clip_end` are whole seconds (0 to 360000, both 0 by default, `clip_end` 0 meaning the end of the video, otherwise after `clip_start`); a clip needs ffmpeg and works on single videos only. `items` is a 1-based range like `1-10,15`.
 
-A job is `{id, group_id, group_title, url, title, kind, status, stage, percent, speed, eta, filename, filepath, error, detail, options, created_at}`, where `status` is one of `queued`, `downloading`, `processing`, `paused`, `complete`, `error` or `cancelled`. `stage` is `""` except while a size-limited video is re-encoded, when it is `converting` (status stays `processing`, `percent` runs 0-100 for the conversion, `speed` reads like `2.4x` and `eta` is set when known).
+A job is `{id, group_id, group_title, url, title, channel, kind, status, stage, percent, speed, eta, filename, filepath, error, detail, options, created_at}`, where `status` is one of `queued`, `downloading`, `processing`, `paused`, `complete`, `error` or `cancelled`. `stage` is `""` except while a size-limited video is re-encoded, when it is `converting` (status stays `processing`, `percent` runs 0-100 for the conversion, `speed` reads like `2.4x` and `eta` is set when known).
 
 ## Development
 
@@ -174,7 +174,7 @@ npx web-ext lint -s extension
 npx web-ext run -s extension
 ```
 
-`build-helper.mjs` cross-compiles all six helpers into `dist\` and stamps them with the add-on version; `--only windows-amd64` builds one. Tests fake the network and yt-dlp; set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test. `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one. `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
+`build-helper.mjs` cross-compiles all four helpers into `dist\` and stamps them with the add-on version; `--only windows-amd64` builds one. Tests fake the network and yt-dlp; set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test. `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one. `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
 
 ## Project structure
 
@@ -186,6 +186,7 @@ helper/
   internal/server/          HTTP API, request guard, idle timeout, download queue (size-limited jobs in sized.go)
   internal/system/          Install dirs, tool downloads, yt-dlp updates, native host, install/uninstall, OS specifics
 scripts/build-helper.mjs    Cross-compile the helper into dist/
+scripts/build-xpi.mjs       Package the add-on as an unsigned .xpi in dist/
 extension/
   manifest.json
   background.js             Only HTTP client: message routing, polling, badge, notifications

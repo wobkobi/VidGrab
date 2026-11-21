@@ -1,4 +1,4 @@
-// "Download" item in the three-dot menu of videos on the home page, search results, the
+// "Download with VidGrab" item in the three-dot menu of videos on the home page, search results, the
 // watch page's related videos and playlists. Downloads with the saved defaults.
 var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
 
@@ -132,7 +132,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
    * @returns {HTMLElement} The item.
    */
   function buildItem(url, list) {
-    const item = el("div", { className: "yt-dl-menu-item", role: "menuitem", tabindex: "0" }, [content.downloadIcon(), el("span", { text: "Download" })]);
+    const item = el("div", { className: "yt-dl-menu-item", role: "menuitem", tabindex: "0" }, [content.brandIcon(), el("span", { text: "Download with VidGrab" })]);
     const activate = (event) => {
       event.preventDefault();
       event.stopPropagation();

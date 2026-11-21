@@ -121,8 +121,9 @@ function metaText(job) {
       return job.kind === "audio" ? "Converting audio..." : "Merging video and audio...";
     case "paused":
       return `${label} at ${format.percent(job.percent)}`;
+    // The title and full bar already say it finished; the filename is on the Open button's tooltip
     case "complete":
-      return job.filename || label;
+      return "";
     case "error":
       return job.error || "Download failed";
     default:
@@ -193,6 +194,7 @@ function updateRow(row, job) {
   for (const action of ACTIONS_BY_STATUS[job.status] || []) {
     const button = el("button", "btn", ACTION_LABELS[action]);
     button.type = "button";
+    if (action === "open" && job.filename) button.title = `Open ${job.filename}`;
     button.addEventListener("click", () => runAction(job.id, action, button));
     row.actions.append(button);
   }
