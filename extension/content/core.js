@@ -250,6 +250,31 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   };
 
   /**
+   * Build the VidGrab icon (white arrow on a red rounded square, as in icons/icon.svg) as inline
+   * SVG. Used where a plain arrow would look like YouTube's own Download item.
+   * @returns {SVGSVGElement} Icon with fixed colours, sized by the yt-dl-icon class.
+   */
+  content.brandIcon = function () {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 96 96");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.setAttribute("class", "yt-dl-icon");
+    const shapes = [
+      ["rect", { x: 4, y: 4, width: 88, height: 88, rx: 20, fill: "#d92b2b" }],
+      ["path", { d: "M40 18h16v30h14L48 72 26 48h14z", fill: "#ffffff" }],
+      ["rect", { x: 24, y: 76, width: 48, height: 8, rx: 4, fill: "#ffffff" }],
+    ];
+    for (const [tag, attrs] of shapes) {
+      const node = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+      svg.append(node);
+    }
+    return svg;
+  };
+
+  /**
    * Whether an element is rendered (YouTube keeps hidden copies of old pages in the DOM).
    * @param {Element} node - Element to test.
    * @returns {boolean} True when it has a layout box.

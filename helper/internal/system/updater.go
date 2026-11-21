@@ -172,11 +172,43 @@ func (u *Updater) RefreshInstalled(ctx context.Context) {
 		}
 		return
 	}
+	done, gen := u.startRefreshLocked()
+	u.installedMu.Unlock()
+	u.readInstalled(ctx, done, gen)
+}
+
+// WarmInstalled starts a read of the installed version in the background when the version is
+// still unknown, unless a read is already running or the last one ended under installedRetry
+// ago. It returns at once.
+//
+// The read is marked as running before the goroutine starts, so a second call that arrives
+// before the goroutine is scheduled sees it and skips. Otherwise a late goroutine could start
+// after the first read had already filled the cache and run yt-dlp a second time.
+func (u *Updater) WarmInstalled(ctx context.Context) {
+	u.installedMu.Lock()
+	skip := u.installed != "" || u.refreshing != nil ||
+		(!u.refreshedAt.IsZero() && u.Now().Sub(u.refreshedAt) < installedRetry)
+	if skip {
+		u.installedMu.Unlock()
+		return
+	}
+	done, gen := u.startRefreshLocked()
+	u.installedMu.Unlock()
+	go u.readInstalled(ctx, done, gen)
+}
+
+// startRefreshLocked marks a read of the installed version as running and returns the
+// channel readInstalled closes when it ends, plus the install generation it started under.
+// Call it with installedMu held.
+func (u *Updater) startRefreshLocked() (chan struct{}, int) {
 	done := make(chan struct{})
 	u.refreshing = done
-	gen := u.installedGen
-	u.installedMu.Unlock()
+	return done, u.installedGen
+}
 
+// readInstalled runs Installed and caches a non-empty answer, unless an install finished
+// meanwhile (gen no longer current). It ends the read that startRefreshLocked began.
+func (u *Updater) readInstalled(ctx context.Context, done chan struct{}, gen int) {
 	version := u.Installed(ctx)
 
 	u.installedMu.Lock()
@@ -187,19 +219,6 @@ func (u *Updater) RefreshInstalled(ctx context.Context) {
 	u.refreshedAt = u.Now()
 	u.refreshing = nil
 	close(done)
-}
-
-// WarmInstalled starts RefreshInstalled in the background when the version is still
-// unknown, unless a read is already running or the last one ended under installedRetry ago.
-// It returns at once.
-func (u *Updater) WarmInstalled(ctx context.Context) {
-	u.installedMu.Lock()
-	skip := u.installed != "" || u.refreshing != nil ||
-		(!u.refreshedAt.IsZero() && u.Now().Sub(u.refreshedAt) < installedRetry)
-	u.installedMu.Unlock()
-	if !skip {
-		go u.RefreshInstalled(ctx)
-	}
 }
 
 // recordInstalled caches the version an install left behind.
