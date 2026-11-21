@@ -19,8 +19,8 @@ const (
 	KindChannel  = "channel"
 )
 
-// Go's "$" matches only at the very end of the text (unlike Python's, which also matches before
-// a trailing newline), so a percent-decoded "%0A" can never slip through these.
+// Go's "$" matches only at the very end of the text, never before a trailing newline, so a
+// percent-decoded "%0A" can never slip through these.
 var (
 	// VideoIDRe matches an 11-character YouTube video ID.
 	VideoIDRe     = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
@@ -97,12 +97,12 @@ func videoURL(id string) (ParsedUrl, error) {
 // Classify validates a YouTube URL and classifies it as a video, playlist or channel.
 //
 // The returned canonical URL is rebuilt from regex-checked parts, so nothing else from the
-// input ever reaches yt-dlp. URL splitting follows Python's urllib.parse.urlsplit and parse_qs
-// rather than net/url, so the same inputs pass or fail with the same messages as the Python
-// backend did. Errors are always *InvalidUrl.
+// input ever reaches yt-dlp. URL splitting is hand-rolled rather than net/url, so odd input
+// (a stray "%", non-ASCII, repeated query keys) is handled predictably and rejected with a
+// clear message. Errors are always *InvalidUrl.
 func Classify(rawURL string) (ParsedUrl, error) {
-	// A Go string can hold invalid UTF-8 (net/url query decoding leaves bytes raw); Python saw
-	// U+FFFD there, which no ID pattern or channel-name rule accepts
+	// A Go string can hold invalid UTF-8; it becomes U+FFFD, which no ID pattern or
+	// channel-name rule accepts
 	url := strings.TrimSpace(strings.ToValidUTF8(rawURL, "�"))
 	if url == "" {
 		return ParsedUrl{}, invalidURL("URL is required")
@@ -159,7 +159,7 @@ func Classify(rawURL string) (ParsedUrl, error) {
 	return channelURL(segments)
 }
 
-// splitResult holds the pieces of Python's urlsplit that Classify uses.
+// splitResult holds the URL pieces (scheme, host part, path, query) that Classify uses.
 type splitResult struct {
 	scheme, netloc, path, query string
 }
@@ -241,10 +241,9 @@ func (s splitResult) hostname() string {
 	return strings.ToLower(host)
 }
 
-// authorityOK mirrors Python's `parts.username or parts.password or parts.port` rejection.
-// Python treats an empty username/password and port 0 as falsy, so "https://@host" and
-// "https://host:0" pass there; they pass here too, which is harmless since the canonical URL
-// is rebuilt. A non-numeric or out-of-range port raised ValueError in Python and is rejected.
+// authorityOK rejects a URL carrying a username, password or port. An empty username or
+// password and port 0 count as absent, so "https://@host" and "https://host:0" pass, which is
+// harmless since the canonical URL is rebuilt. A non-numeric or out-of-range port is rejected.
 func (s splitResult) authorityOK() bool {
 	userinfo, hasUser, _, port := s.hostInfo()
 	if hasUser {
@@ -285,18 +284,18 @@ func parseQS(query string) map[string][]string {
 		if !found || value == "" {
 			continue
 		}
-		key, _ := pyUnquote(strings.ReplaceAll(name, "+", " "), false)
-		val, _ := pyUnquote(strings.ReplaceAll(value, "+", " "), false)
+		key, _ := percentUnquote(strings.ReplaceAll(name, "+", " "), false)
+		val, _ := percentUnquote(strings.ReplaceAll(value, "+", " "), false)
 		result[key] = append(result[key], val)
 	}
 	return result
 }
 
-// pyUnquote ports urllib.parse.unquote. Python decodes each run of ASCII characters on its own
-// and passes non-ASCII characters through, so a multi-byte escape split by a literal non-ASCII
+// percentUnquote decodes %XX escapes. Each run of ASCII characters is decoded on its own and
+// non-ASCII characters pass through, so a multi-byte escape split by a literal non-ASCII
 // character is invalid. A "%" not followed by two hex digits stays literal. With strict set,
 // invalid UTF-8 is an error; otherwise it becomes U+FFFD.
-func pyUnquote(s string, strict bool) (string, error) {
+func percentUnquote(s string, strict bool) (string, error) {
 	if !strings.Contains(s, "%") {
 		return s, nil
 	}
@@ -353,9 +352,9 @@ func isHex(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-// pyQuote ports urllib.parse.quote(s, safe=""): every UTF-8 byte except ASCII letters, digits
+// percentQuote escapes a path segment: every UTF-8 byte except ASCII letters, digits
 // and "_.-~" becomes an uppercase %XX escape.
-func pyQuote(s string) string {
+func percentQuote(s string) string {
 	var out strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -444,7 +443,7 @@ func channelURL(segments []string) (ParsedUrl, error) {
 // "?" and dot-only names such as "..", so the re-encoded name cannot add path segments or
 // dot-segments to the canonical URL. Returns the decoded name and its percent-encoded form.
 func channelName(segment, message string) (name, encoded string, err error) {
-	name, err = pyUnquote(segment, true)
+	name, err = percentUnquote(segment, true)
 	if err != nil {
 		return "", "", invalidURL(message)
 	}
@@ -460,7 +459,7 @@ func channelName(segment, message string) (name, encoded string, err error) {
 			return "", "", invalidURL(message)
 		}
 	}
-	return name, pyQuote(name), nil
+	return name, percentQuote(name), nil
 }
 
 // ParseItems parses a 1-based item selection such as "1-10,15" into sorted, merged inclusive

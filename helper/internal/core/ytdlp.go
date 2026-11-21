@@ -106,7 +106,7 @@ var (
 	// bitrate=..."; audio-only lines start at "size="); yt-dlp itself reports no progress then
 	ffmpegTimeRe = regexp.MustCompile(`^(?:frame|size)=.*\btime=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)`)
 	// Strips the "[youtube] abc123: " or "[youtube:tab] PLx: " extractor prefix; the classes
-	// spell out Python's Unicode \w (letters, marks, digits, underscore)
+	// spell out a Unicode \w (letters, marks, digits, underscore)
 	extractorPrefixRe  = regexp.MustCompile(`^\[[\p{L}\p{M}\p{N}_:]+\]\s+[\p{L}\p{M}\p{N}_-]+:\s*`)
 	processingPrefixes = []string{"[Merger]", "[ExtractAudio]", "[VideoRemuxer]", "[VideoConvertor]"}
 	codecSort          = map[string]string{"h264": "vcodec:h264", "vp9": "vcodec:vp9", "av1": "vcodec:av01"}
@@ -173,7 +173,7 @@ func DefaultRunner(ctx context.Context, argv []string) (string, string, int, err
 		release()
 	}
 	exited(ctx.Err() != nil)
-	// Python decoded with errors="replace"
+	// Invalid UTF-8 in the output becomes U+FFFD instead of failing
 	out := strings.ToValidUTF8(stdout.String(), "�")
 	errOut := strings.ToValidUTF8(stderr.String(), "�")
 	if ctx.Err() != nil {
@@ -417,7 +417,7 @@ func ChildEnv() []string {
 	return env
 }
 
-// splitLines ports Python's str.splitlines: it breaks on \n, \r, \r\n and the other Unicode
+// splitLines breaks on \n, \r, \r\n and the other Unicode
 // line boundaries, and drops the trailing empty piece.
 func splitLines(text string) []string {
 	var lines []string
@@ -521,7 +521,8 @@ type Info struct {
 	Entries    []InfoEntry `json:"entries"`
 }
 
-// truthy ports Python truthiness for decoded JSON values.
+// truthy reports whether a decoded JSON value is set: false, null, 0, "" and empty arrays or
+// objects are not.
 func truthy(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -563,7 +564,7 @@ func asNumber(v any) (float64, bool) {
 	return 0, false
 }
 
-// asInt mirrors Python's isinstance(v, int): a json.Number must be written without a fraction
+// asInt reads a JSON integer: a json.Number must be written without a fraction
 // or exponent, while a float64 (from a plain json.Unmarshal) counts when it is whole.
 func asInt(v any) (int, bool) {
 	switch x := v.(type) {
@@ -952,8 +953,8 @@ func (p *OutputParser) progressJSON(payload string) *ParseUpdate {
 // overall maps one stream's percentage onto overall progress, never moving backwards.
 //
 // With two or more expected streams the first maps to 0-90 (percent * 0.9) and every later one
-// to 90-100 (90 + percent * 0.1). The result is rounded to one decimal place the way Python's
-// round(x, 1) does (correctly rounded, ties to even), which strconv's 'f' formatting matches.
+// to 90-100 (90 + percent * 0.1). The result is rounded to one decimal place with strconv's 'f'
+// formatting (correctly rounded, ties to even).
 func (p *OutputParser) overall(streamPercent float64) *float64 {
 	streamPercent = math.Min(math.Max(streamPercent, 0), 100)
 	index := max(p.streams-1, 0)

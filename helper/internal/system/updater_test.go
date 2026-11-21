@@ -236,7 +236,7 @@ func TestCorruptStateFileIgnored(t *testing.T) {
 	}
 }
 
-func TestReadsPythonStateFile(t *testing.T) {
+func TestReadsFractionalLastCheck(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte(`{"last_check": 1000000.5, "latest": "2026.10.21", "attempted": "2026.10.21"}`), 0o600); err != nil {
 		t.Fatal(err)

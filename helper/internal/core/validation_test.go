@@ -158,7 +158,7 @@ func TestRejectionMessages(t *testing.T) {
 		{"https://user:pass@www.youtube.com/", "Not a valid YouTube URL"},
 		{"https://www.youtube.com/watch?v=" + testVID + ";x", "Invalid video ID"},
 		{"https://youtu.be/x", "Not a valid YouTube URL"},
-		// Python's quirks kept: an empty userinfo and port 0 are falsy there, so they pass
+		// An empty userinfo and port 0 count as absent, so they pass
 		{"https://@www.youtube.com:0/watch?v=" + testVID, ""},
 	}
 	for _, c := range cases {
@@ -187,7 +187,7 @@ func TestParseItems(t *testing.T) {
 		spec string
 		want []ItemRange
 	}{
-		// Python's None and "" both mean "all items"; Go has only the empty string
+		// Empty or blank means "all items"
 		{"", nil},
 		{"   ", nil},
 		{"1", []ItemRange{{1, 1}}},

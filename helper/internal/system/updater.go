@@ -89,8 +89,8 @@ type Updater struct {
 	refreshedAt  time.Time
 }
 
-// updateState is the persisted check state. last_check is Unix seconds, as the Python
-// backend stored it, so an existing file keeps working.
+// updateState is the persisted check state. last_check is Unix seconds and may carry a
+// fraction.
 type updateState struct {
 	LastCheck float64 `json:"last_check,omitempty"`
 	Latest    string  `json:"latest,omitempty"`
@@ -349,7 +349,8 @@ func versionKey(version string) []int {
 	return key
 }
 
-// compareVersions compares two versions part by part like Python tuple comparison: -1, 0 or 1.
+// compareVersions compares two versions part by part, the shorter one first when all shared
+// parts match: -1, 0 or 1.
 // A version that is a prefix of the other sorts first (2026.03.03 < 2026.03.03.1).
 func compareVersions(a, b string) int {
 	ka, kb := versionKey(a), versionKey(b)

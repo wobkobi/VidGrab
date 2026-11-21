@@ -45,7 +45,7 @@ const maxLineBytes = 1 << 20
 var (
 	// Leftovers of an interrupted download: .part/.ytdl files and per-format intermediates such
 	// as "Title [id].f137.mp4" that only exist until the merge finishes. The classes spell out
-	// Python's Unicode \w so non-ASCII extensions match the same way. A size-limited job adds
+	// a Unicode \w so non-ASCII extensions match too. A size-limited job adds
 	// its working "Title [id].<tag>.source.mp4" and the "Title [id].<tag>.sized.mp4" being
 	// encoded
 	partialRe = regexp.MustCompile(`(\.part(-Frag\d+)?|\.ytdl|\.f\d+[\p{L}\p{N}_-]*\.[\p{L}\p{N}_]+|\.temp\.[\p{L}\p{N}_]+|\.source\.[\p{L}\p{N}_]+|\.sized\.mp4)$`)
@@ -232,7 +232,7 @@ func collapseSpace(s string) string {
 	return b.String()
 }
 
-// newJobID returns a random uuid4 in hex, the form the Python backend used.
+// newJobID returns a random uuid4 as 32 hex characters.
 func newJobID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -1035,7 +1035,7 @@ func (q *JobQueue) removePartials(j *job) {
 
 // readLines calls fn for every line of r until EOF, decoding invalid UTF-8 as U+FFFD.
 //
-// "\n", "\r\n" and a lone "\r" all end a line, like Python's universal newlines. A line longer
+// "\n", "\r\n" and a lone "\r" all end a line. A line longer
 // than maxLineBytes is cut there and the rest of it dropped, so the reader keeps draining the
 // pipe (a full pipe would block yt-dlp) without unbounded memory.
 func readLines(r io.Reader, fn func(string)) {

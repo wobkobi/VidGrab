@@ -8,7 +8,7 @@ YTDL.api = (function () {
   const NOT_RUNNING = "Backend not running";
   const TOKEN_HEADER = "X-YTDL-Token";
   // Creating jobs for a playlist or channel lists its entries first, which the backend allows 120s
-  // for. The update outlasts the backend's 300s pip timeout so a slow pip run still reports back.
+  // for. The update downloads a new yt-dlp build, so it gets over five minutes on a slow link.
   const TIMEOUTS = {health: 2000, info: 25000, jobs: 5000, create: 130000, update: 320000};
 
   // Install token from the native host; sent on every call except /health
@@ -72,7 +72,7 @@ YTDL.api = (function () {
   /**
    * Build a short user-facing message from a backend error body ({error, detail}). The
    * detail can be 20 lines of yt-dlp output, so it travels separately as `detail` for
-   * tooltips and logs. FastAPI's own validation errors use `detail` as a list.
+   * tooltips and logs. A `detail` that is not a string is ignored.
    * @param {any} payload - Parsed response body, or null.
    * @param {number} status - HTTP status code.
    * @returns {string} Message to show the user.

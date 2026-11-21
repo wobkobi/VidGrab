@@ -1,8 +1,7 @@
 // Request and settings models; every option is an enum or a bounded number.
 //
-// The decoders port Pydantic's lax-mode validation for the shapes the API takes: unknown fields
-// are ignored, every problem is collected with its location, and the messages match Pydantic's
-// so the "Invalid request" detail reads the same as the Python backend's.
+// The decoders are lax about the shapes the API takes: unknown fields are ignored, and every
+// problem is collected with its location so the "Invalid request" detail lists them all.
 package core
 
 import (
@@ -21,10 +20,10 @@ import (
 // it only separate video/audio streams exist, so ffmpeg must merge.
 const MaxProgressiveHeight = 720
 
-// Pydantic also takes "3.0" (a zero fractional part) as an integer string
+// "3.0" (a zero fractional part) also counts as an integer string
 var intStringRe = regexp.MustCompile(`^[+-]?[0-9]+(\.0*)?$`)
 
-// Enum values, in the order Pydantic lists them in error messages.
+// Enum values, in the order error messages list them.
 var (
 	Kinds         = []string{"video", "audio"}
 	Qualities     = []string{"best", "2160", "1440", "1080", "720", "480", "360"}
@@ -190,7 +189,7 @@ func NeedsFfmpeg(opts JobOptions) bool {
 }
 
 // Problem is one validation failure: Loc is the path to the field (starting with "body" for a
-// request body) and Msg is Pydantic's wording.
+// request body) and Msg is the message shown for it.
 type Problem struct {
 	Loc []string
 	Msg string
@@ -199,8 +198,8 @@ type Problem struct {
 // ValidationError collects every Problem found in one body, in field order.
 type ValidationError struct{ Problems []Problem }
 
-// Error joins the problems as "body.options.quality: Input should be ...; ...", the detail the
-// Python server returned with 400 "Invalid request".
+// Error joins the problems as "body.options.quality: Input should be ...; ...", the detail sent
+// with 400 "Invalid request".
 func (e *ValidationError) Error() string {
 	parts := make([]string, len(e.Problems))
 	for i, p := range e.Problems {
@@ -227,7 +226,7 @@ func at(loc []string, field string) []string {
 	return append(append([]string(nil), loc...), field)
 }
 
-// literalMessage renders Pydantic's literal_error text: "Input should be 'a', 'b' or 'c'".
+// literalMessage renders an enum error: "Input should be 'a', 'b' or 'c'".
 func literalMessage(allowed []string) string {
 	quoted := make([]string, len(allowed))
 	for i, a := range allowed {
@@ -308,7 +307,7 @@ func checkBounds(v *validator, loc []string, value float64, lo, hi int) bool {
 }
 
 // decodeObject parses a request body that must be a JSON object. Empty bodies and null count as
-// missing, as FastAPI treats them.
+// missing.
 func decodeObject(data []byte, v *validator) (map[string]json.RawMessage, bool) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
@@ -335,8 +334,8 @@ func decodeObject(data []byte, v *validator) (map[string]json.RawMessage, bool) 
 
 var errTrailingData = errors.New("trailing data")
 
-// jsonErrorPos approximates the character index Python's json module reports: Go's SyntaxError
-// offset counts the offending byte, so step back one; trailing data points at its first byte.
+// jsonErrorPos gives the index of the offending character: Go's SyntaxError offset counts one
+// past it, so step back one; trailing data points at its first byte.
 func jsonErrorPos(data []byte, dec *json.Decoder, err error) int {
 	var syntax *json.SyntaxError
 	switch {
@@ -352,7 +351,7 @@ func jsonErrorPos(data []byte, dec *json.Decoder, err error) int {
 func isNull(raw json.RawMessage) bool { return string(bytes.TrimSpace(raw)) == "null" }
 
 // decodeLiteral reads an enum field. With intToString set, a JSON integer such as 1080 becomes
-// "1080" first, as the Python model's before-validator does for quality and audio_bitrate.
+// "1080" first, so quality and audio_bitrate accept either form.
 func decodeLiteral(v *validator, loc []string, raw json.RawMessage, allowed []string, intToString bool) (string, bool) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
@@ -385,7 +384,7 @@ func decodeString(v *validator, loc []string, raw json.RawMessage, maxLen int) (
 	return s, true
 }
 
-// decodeInt reads an int field in Pydantic's lax mode: integers, floats with no fractional part,
+// decodeInt reads an int field leniently: integers, floats with no fractional part,
 // booleans (as 0/1) and integer strings are accepted, then the bounds are checked.
 func decodeInt(v *validator, loc []string, raw json.RawMessage, lo, hi int) (int, bool) {
 	// Values are compared as float64 so a huge integer still fails the bound check instead of
@@ -431,8 +430,8 @@ func decodeInt(v *validator, loc []string, raw json.RawMessage, lo, hi int) (int
 	return int(value), true
 }
 
-// decodeBool reads a bool field in Pydantic's lax mode: booleans, the numbers 0 and 1, and the
-// strings Pydantic recognises ("true", "yes", "on", "1", "f", ...) are accepted.
+// decodeBool reads a bool field leniently: booleans, the numbers 0 and 1, and the strings
+// queryBool also takes ("true", "yes", "on", "1", "f", ...) are accepted.
 func decodeBool(v *validator, loc []string, raw json.RawMessage) (bool, bool) {
 	var decoded any
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -449,7 +448,7 @@ func decodeBool(v *validator, loc []string, raw json.RawMessage) (bool, bool) {
 		if f == 0 || f == 1 {
 			return f == 1, true
 		}
-		// Pydantic words the two cases differently: an integer it could not map, a float it never tries
+		// The two cases are worded differently: an integer that could not map, a float never tried
 		if strings.ContainsAny(x.String(), ".eE") {
 			v.add(loc, "Input should be a valid boolean")
 		} else {
@@ -594,7 +593,7 @@ func DecodeSettingsUpdate(data []byte) (SettingsUpdate, error) {
 }
 
 // DecodeSettings validates a settings.json file; absent fields take their defaults and null is
-// rejected. Callers fall back to DefaultSettings on any error, as the Python store did.
+// rejected. Callers fall back to DefaultSettings on any error.
 func DecodeSettings(data []byte) (Settings, error) {
 	var v validator
 	settings := DefaultSettings()

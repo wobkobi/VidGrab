@@ -18,7 +18,7 @@ import (
 	"vidgrab/internal/system"
 )
 
-// Token and proof (the API parts of the Python test_auth.py)
+// Token and proof
 
 func TestAPIRequiresToken(t *testing.T) {
 	e := newEnv(t, withToken(testToken))

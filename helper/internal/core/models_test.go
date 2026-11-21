@@ -10,8 +10,7 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
-// The expected details below were captured from the Python backend (FastAPI + Pydantic) for the
-// same bodies, so the 400 "Invalid request" detail stays identical.
+// The expected details pin the exact 400 "Invalid request" text the add-on shows for each body.
 func TestDecodeJobRequestErrors(t *testing.T) {
 	cases := []struct{ body, detail string }{
 		{`{"options":null}`, "body.url: Field required; body.options: Input should be a valid dictionary or object to extract fields from"},

@@ -400,8 +400,8 @@ func (s *Server) clearInfoCache() {
 
 // Responses
 
-// writeJSON writes body as JSON with the given status. HTML escaping is off so text reads the
-// same as the Python backend's.
+// writeJSON writes body as JSON with the given status. HTML escaping is off so "<", ">" and "&"
+// in titles and errors arrive as written.
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -495,7 +495,8 @@ func queryValue(r *http.Request, name string, maxLen int) (value string, present
 	return value, true, nil
 }
 
-// queryBool parses a boolean query parameter in Pydantic's lax mode; absent means false.
+// queryBool parses a boolean query parameter (1/0, true/false, t/f, yes/no, y/n, on/off, any
+// case); absent means false.
 func queryBool(r *http.Request, name string) (bool, error) {
 	value, present, _ := queryValue(r, name, 0)
 	if !present {
@@ -545,8 +546,7 @@ func hostAllowed(hostHeader string) bool {
 	return allowedHosts[strings.ToLower(host)]
 }
 
-// ServeHTTP runs the guard, then CORS, then the routes, in the order the Python backend's
-// middleware stack ran them.
+// ServeHTTP runs the guard, then CORS, then the routes.
 //
 // The guard rejects anything a web page could send. The custom X-YTDL-Client header forces a
 // CORS preflight that only moz-extension:// origins pass, and any other Origin is refused

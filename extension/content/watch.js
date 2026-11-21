@@ -10,6 +10,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   const el = content.el;
   const DONE_MS = 3000;
   const FLASH_MS = 4000;
+  // How long "Starting..." waits for the new job to show up in the job list before giving up
+  const START_WAIT_MS = 5000;
   const ACTIVE = new Set(YTDL.constants.ACTIVE_STATUSES);
 
   // Fallbacks tried after the configurable selector, newest layout first
@@ -41,7 +43,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       "aria-haspopup": "dialog",
       "aria-expanded": "false",
     });
-    arrow.append(el("span", { className: "yt-dl-chevron", "aria-hidden": "true" }));
+    arrow.append(el("span", { className: "yt-dl-chevron", "aria-hidden": "true" }), el("span", { className: "yt-dl-cross", "aria-hidden": "true" }));
 
     const root = el(
       "div",
@@ -63,6 +65,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     let doneUntil = 0;
     let lastJobId = null;
     let lastStatus = null;
+    // Label min-width held for the current job so it only grows ("Queued" > "45%" > "Converting 45%")
+    let heldWidth = 0;
+    let startingUntil = 0;
+    let startingTimer = null;
 
     /**
      * Show a temporary message (e.g. a failed request) on the button.
@@ -101,6 +107,12 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     function view() {
       const job = videoId ? content.latestJobFor(videoId) : null;
       if (busyText) return { text: busyText, tone: "busy", progress: null, action: "none", title: busyText };
+      // The job was created but the next job poll hasn't delivered it yet: keep the busy label
+      // instead of flashing back to "Download" for a moment
+      if (Date.now() < startingUntil) {
+        if (job && ACTIVE.has(job.status)) startingUntil = 0;
+        else return { text: "Starting...", tone: "busy", progress: null, action: "none", title: "Starting..." };
+      }
       if (flash) return { text: flash, tone: "error", progress: null, action: "download", title: flash };
       if (content.backendDown() && !(job && ACTIVE.has(job.status))) {
         if (content.helperMissing()) {
@@ -147,6 +159,45 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     }
 
     let currentAction = "download";
+    let cancelJobId = null;
+
+    /**
+     * Switch the arrow between opening the panel and cancelling the active job.
+     * @param {string|null} jobId - Active job to cancel, or null for the options arrow.
+     */
+    function setArrowMode(jobId) {
+      if (jobId === cancelJobId) return;
+      cancelJobId = jobId;
+      root.dataset.cancel = String(Boolean(jobId));
+      if (jobId) {
+        if (content.panel.isOpenFor(arrow)) content.panel.close();
+        arrow.removeAttribute("aria-haspopup");
+        arrow.removeAttribute("aria-expanded");
+        arrow.setAttribute("aria-label", "Cancel download");
+        arrow.title = "Cancel download";
+      } else {
+        arrow.setAttribute("aria-haspopup", "dialog");
+        arrow.setAttribute("aria-expanded", "false");
+        arrow.setAttribute("aria-label", "Download options");
+        arrow.title = "Download options";
+      }
+    }
+
+    /**
+     * Hold the label at its widest during a job so the button does not resize on every
+     * progress tick; release it once the job is over.
+     * @param {boolean} hold - Whether a job is in progress.
+     */
+    function holdWidth(hold) {
+      if (compact) return;
+      if (!hold) {
+        heldWidth = 0;
+        labelNode.style.removeProperty("min-width");
+        return;
+      }
+      heldWidth = Math.max(heldWidth, Math.ceil(labelNode.getBoundingClientRect().width));
+      labelNode.style.minWidth = `${heldWidth}px`;
+    }
 
     /**
      * Apply the current view model to the button.
@@ -161,6 +212,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       main.setAttribute("aria-disabled", String(v.action === "none"));
       if (v.progress === null) root.style.removeProperty("--yt-dl-progress");
       else root.style.setProperty("--yt-dl-progress", `${v.progress}%`);
+      const job = videoId ? content.latestJobFor(videoId) : null;
+      const active = Boolean(job && ACTIVE.has(job.status));
+      setArrowMode(active ? job.id : null);
+      holdWidth(active || v.tone === "busy");
     }
 
     /**
@@ -213,13 +268,26 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         if (!started) return;
       }
       const targetUrl = url;
-      await withBusy("Starting...", () =>
-        content.send({ type: "createJobs", url: targetUrl, options: { ...content.settings.defaults } }),
-      );
+      const ok = await withBusy("Starting...", async () => {
+        const res = await content.send({ type: "createJobs", url: targetUrl, options: { ...content.settings.defaults } });
+        if (res.ok) {
+          startingUntil = Date.now() + START_WAIT_MS;
+          clearTimeout(startingTimer);
+          startingTimer = setTimeout(render, START_WAIT_MS + 50);
+        }
+        return res;
+      });
+      if (!ok) startingUntil = 0;
     }
 
     main.addEventListener("click", onMainClick);
-    arrow.addEventListener("click", () => {
+    arrow.addEventListener("click", async () => {
+      if (cancelJobId) {
+        if (busyText) return;
+        const id = cancelJobId;
+        await withBusy("Cancelling...", () => content.send({ type: "jobAction", id, action: "cancel" }));
+        return;
+      }
       if (!url) return;
       content.panel.open({ anchor: arrow, url, mode: "video" });
     });
@@ -244,6 +312,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         videoId = id;
         flash = null;
         doneUntil = 0;
+        startingUntil = 0;
         const job = content.latestJobFor(id);
         lastJobId = job ? job.id : null;
         lastStatus = job ? job.status : null;
@@ -257,6 +326,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         offJobs();
         clearTimeout(flashTimer);
         clearTimeout(doneTimer);
+        clearTimeout(startingTimer);
         if (content.panel.isOpenFor(arrow)) content.panel.close();
         root.remove();
       },

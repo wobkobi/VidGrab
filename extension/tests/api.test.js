@@ -52,7 +52,7 @@ test("errors keep the short message and carry the detail separately", async () =
   assert.match(res.detail, /Downloading webpage/);
 });
 
-test("update waits longer than the backend's pip timeout", () => {
+test("update waits over five minutes for a slow yt-dlp download", () => {
   assert.ok(api.TIMEOUTS.update > 300000);
 });
 
