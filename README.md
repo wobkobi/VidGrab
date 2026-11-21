@@ -1,6 +1,6 @@
 # VidGrab
 
-A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.4.2.
+A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.5.0.
 
 ## What it does
 
@@ -54,7 +54,7 @@ Firefox installed as a Snap or Flatpak on Linux cannot start programs outside it
 
 ### Installing the add-on
 
-The easiest way is the signed `vidgrab-<version>.xpi` from the [latest release](https://github.com/wobkobi/yt-dl-firefox/releases/latest): open it in Firefox and confirm. The helper downloads for every system are on the same page. Firefox then updates the add-on by itself, checking about once a day.
+Install [VidGrab from addons.mozilla.org](https://addons.mozilla.org/firefox/addon/vidgrab/). Firefox then updates it by itself. The helper downloads for every system are on the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
 
 For development, temporary add-ons (`about:debugging#/runtime/this-firefox` > **Load Temporary Add-on...** > `extension\manifest.json`) are removed when Firefox restarts. To keep it installed, either:
 
@@ -65,7 +65,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, signs the add-on as unlisted on AMO, builds the six helpers, and creates the `v<version>` GitHub release with the `.xpi`, the helpers and `updates.json`. The manifest's `update_url` points at `updates.json` on the latest release, so installed copies update themselves. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
+Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, submits the add-on to AMO as a listed version, builds the six helpers, and creates the `v<version>` GitHub release with the helpers and `updates.json`. AMO reviews the version and Firefox updates installed copies from AMO once it is approved; `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
 
 ## Usage
 
@@ -130,7 +130,7 @@ Both live in the install folder under `data\tools\`. The folder also holds the b
 
 | Problem | Fix |
 |---|---|
-| "VidGrab helper not installed" | Run the helper once (see Setup), then click **Check again** in the popup or restart Firefox |
+| "VidGrab helper not installed" | Download the helper from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest) (the popup message and the page button both link there; a fresh install opens it by itself), run it once, then click **Check again** in the popup or restart Firefox |
 | "Setting up yt-dlp and ffmpeg" stays for a long time | The first run downloads up to about 125 MB. If it shows an error, check your connection and click **Check again**; details are in `data\server.log` |
 | "Another program is using the helper's port" | Something other than the helper answered on the helper's port, so the add-on refuses to talk to it. Click **Check again**: the helper then moves to a new random port by itself. |
 | No button on the page | Reload the tab. If YouTube changed its layout, adjust the selectors in Options |

@@ -62,7 +62,6 @@ jobs:
       - name: Test
         run: node --test extension/tests
 
-      # --self-hosted: the add-on is signed unlisted and updates through its own
-      # update_url, which the default (AMO-listed) rules reject.
+      # Default rules, the same ones AMO applies to a listed submission
       - name: Lint
-        run: npx --yes web-ext@10.8.0 lint -s extension --self-hosted
+        run: npx --yes web-ext@10.8.0 lint -s extension

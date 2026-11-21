@@ -106,14 +106,14 @@ YTDL.constants = (function () {
 
   const LIMITS = {concurrency: {min: 1, max: 5}, fragments: {min: 1, max: 8}, max_size_mb: {min: 1, max: 4000}};
 
-  // Download page for the native helper. Empty means there is no release page yet, so the
-  // UI shows the instruction as plain text instead of a link.
-  const HELPER_URL = "";
+  // Download page for the native helper: the latest GitHub release carries every platform's
+  // build next to the signed add-on. Empty would show the instruction as plain text instead.
+  const HELPER_URL = "https://github.com/wobkobi/VidGrab/releases/latest";
 
   // Backend state code for "the native host is not registered with Firefox"
   const HELPER_MISSING = "helper_missing";
   const HELPER_MISSING_ERROR = "VidGrab helper not installed";
-  const HELPER_MISSING_DETAIL = "Download VidGrab-helper and run it once";
+  const HELPER_MISSING_DETAIL = "Download the VidGrab helper and run it once";
 
   /**
    * Classify a sendNativeMessage rejection. Firefox rejects with "No such native
