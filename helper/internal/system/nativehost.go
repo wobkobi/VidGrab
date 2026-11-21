@@ -85,6 +85,9 @@ type NativeHost struct {
 	Spawn func(port int) error
 	// Wait bounds how long a freshly started server gets to answer.
 	Wait time.Duration
+	// AllowForeground passes this host's right to bring a window to the front to every
+	// process (see AllowForeground).
+	AllowForeground func() error
 	// Sleep and Now drive the wait loop.
 	Sleep func(time.Duration)
 	Now   func() time.Time
@@ -113,10 +116,11 @@ func NewNativeHost() *NativeHost {
 			argv := []string{self, "serve", "--idle-timeout", fmt.Sprint(ServerIdleTimeout), "--port", fmt.Sprint(port)}
 			return SpawnDetached(argv, filepath.Join(dataDir, ServerLogFile))
 		},
-		Wait:  ServerStartWait,
-		Sleep: time.Sleep,
-		Now:   time.Now,
-		Log:   os.Stderr,
+		AllowForeground: AllowForeground,
+		Wait:            ServerStartWait,
+		Sleep:           time.Sleep,
+		Now:             time.Now,
+		Log:             os.Stderr,
 	}
 }
 
@@ -130,8 +134,9 @@ func RunNativeHost(stdin io.Reader, stdout io.Writer) int {
 //
 // Every reply carries the install token and the server's port, since this host is the only
 // channel that hands them to the extension (the host manifest's allowed_extensions limits who
-// can call it). The "ping" command only reports whether the server runs; anything else also
-// starts it.
+// can call it). The "ping" command only reports whether the server runs, and "foreground"
+// lets the window of a file the server is about to open come to the front (the add-on sends
+// it right before Open and Show in folder); anything else also starts the server.
 func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 	message, err := ReadNativeMessage(stdin)
 	if err != nil {
@@ -153,7 +158,15 @@ func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 		command = m["command"]
 	}
 	var reply map[string]any
-	if command == "ping" {
+	switch command {
+	case "foreground":
+		reply = map[string]any{"status": "ok", "detail": "Foreground allowed"}
+		if h.AllowForeground != nil {
+			if err := h.AllowForeground(); err != nil {
+				reply = map[string]any{"status": "error", "detail": "Could not allow the foreground: " + err.Error()}
+			}
+		}
+	case "ping":
 		current, err := h.Probe(port, token)
 		switch {
 		case err != nil:
@@ -163,7 +176,7 @@ func (h *NativeHost) Run(stdin io.Reader, stdout io.Writer) int {
 		default:
 			reply = map[string]any{"status": "stopped", "detail": "Backend is not running"}
 		}
-	} else {
+	default:
 		reply, port = h.EnsureServer(port, token)
 	}
 	reply["token"] = token

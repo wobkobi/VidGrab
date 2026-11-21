@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "VidGrab",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "Download YouTube videos, Shorts, playlists and channels as video or MP3 through a local yt-dlp backend.",
   "browser_specific_settings": {
     "gecko": {
@@ -38,6 +38,7 @@
         "content/panel.js",
         "content/watch.js",
         "content/shorts.js",
+        "content/menu.js",
         "content/lists.js"
       ],
       "css": ["content/content.css"],

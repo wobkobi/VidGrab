@@ -109,6 +109,7 @@ function metaText(job) {
   const label = format.statusLabel(job.status);
   switch (job.status) {
     case "downloading": {
+      if (format.isPreparing(job)) return "Preparing...";
       const parts = [format.percent(job.percent)];
       if (job.speed) parts.push(job.speed);
       const eta = format.eta(job.eta);

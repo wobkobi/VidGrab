@@ -125,6 +125,17 @@ YTDL.format = (function () {
   }
 
   /**
+   * Whether a downloading job has not received any data yet. yt-dlp first fetches the video's
+   * details and picks formats, which takes a few seconds at 0% with no speed; showing that as
+   * "0%" looks stuck.
+   * @param {unknown} job - Job from the backend.
+   * @returns {boolean} True until the first progress report.
+   */
+  function isPreparing(job) {
+    return Boolean(job) && job.status === "downloading" && !(Number(job.percent) > 0) && !job.speed;
+  }
+
+  /**
    * Short label for a converting job, for example "Converting 45%".
    * @param {{percent?: unknown}} job - Converting job.
    * @returns {string} Label with the conversion percentage.
@@ -167,7 +178,7 @@ YTDL.format = (function () {
     return {state: "installing", text: Number.isFinite(pct) ? `${label}... ${percent(pct)}` : `${label}...`};
   }
 
-  return {bytes, eta, percent, parseRange, parseTime, clock, statusLabel, isConverting, convertingLabel, convertingMeta, setupStatus};
+  return {bytes, eta, percent, parseRange, parseTime, clock, statusLabel, isConverting, isPreparing, convertingLabel, convertingMeta, setupStatus};
 })();
 
 if (typeof module !== "undefined") module.exports = YTDL.format;

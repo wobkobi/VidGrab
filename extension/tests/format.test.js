@@ -83,6 +83,15 @@ test("setupStatus surfaces the setup error", () => {
   assert.equal(format.setupStatus({tools: {state: "error"}}).text, "Setting up yt-dlp and ffmpeg failed: Unknown error");
 });
 
+test("isPreparing holds until the first progress report", () => {
+  assert.equal(format.isPreparing({status: "downloading", percent: 0, speed: null}), true);
+  assert.equal(format.isPreparing({status: "downloading"}), true);
+  assert.equal(format.isPreparing({status: "downloading", percent: 0, speed: "1.2MiB/s"}), false);
+  assert.equal(format.isPreparing({status: "downloading", percent: 0.4, speed: null}), false);
+  assert.equal(format.isPreparing({status: "queued", percent: 0}), false);
+  assert.equal(format.isPreparing(null), false);
+});
+
 test("isConverting needs status processing with stage converting", () => {
   assert.equal(format.isConverting({status: "processing", stage: "converting"}), true);
   assert.equal(format.isConverting({status: "processing", stage: ""}), false);

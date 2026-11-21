@@ -173,3 +173,22 @@ func startDetached(argv []string, log *os.File, dir string, flags uint32) error 
 	}
 	return cmd.Process.Release()
 }
+
+// asfwAny is ASFW_ANY: every process may set the foreground window.
+const asfwAny = 0xFFFFFFFF
+
+var procAllowSetForegroundWindow = windows.NewLazySystemDLL("user32.dll").NewProc("AllowSetForegroundWindow")
+
+// AllowForeground lets the next window any process opens come to the front.
+//
+// Windows only gives focus to a new window when the process behind it may set the foreground,
+// which the long-running server (started detached, long ago) may not: a file it opens appears
+// behind Firefox. The native host is started by Firefox while Firefox is in front, so it holds
+// that right and can pass it on with AllowSetForegroundWindow. The grant lasts until the next
+// user input or focus change.
+func AllowForeground() error {
+	if ok, _, err := procAllowSetForegroundWindow.Call(asfwAny); ok == 0 {
+		return err
+	}
+	return nil
+}

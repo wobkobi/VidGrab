@@ -205,6 +205,29 @@ func TestRunPing(t *testing.T) {
 	}
 }
 
+func TestRunForegroundNeitherProbesNorSpawns(t *testing.T) {
+	f := &fakeHost{answers: []any{nil}}
+	h := f.host()
+	allowed := 0
+	h.AllowForeground = func() error {
+		allowed++
+		return nil
+	}
+	code, reply := runHost(t, h, frame(t, map[string]any{"command": "foreground"}))
+	if code != 0 || reply["status"] != "ok" || allowed != 1 || f.probes != 0 || f.spawned != 0 {
+		t.Fatalf("code %d, reply %v, allowed %d, probes %d, spawned %d", code, reply, allowed, f.probes, f.spawned)
+	}
+}
+
+func TestRunForegroundFailure(t *testing.T) {
+	h := (&fakeHost{answers: []any{nil}}).host()
+	h.AllowForeground = func() error { return errors.New("access denied") }
+	_, reply := runHost(t, h, frame(t, map[string]any{"command": "foreground"}))
+	if reply["status"] != "error" || !strings.Contains(reply["detail"].(string), "access denied") {
+		t.Fatalf("reply %v", reply)
+	}
+}
+
 func TestRunPingReportsForeignBackend(t *testing.T) {
 	f := &fakeHost{answers: []any{foreign()}}
 	_, reply := runHost(t, f.host(), frame(t, map[string]any{"command": "ping"}))

@@ -33,6 +33,9 @@ let lastBadge = null;
 // Status per job id from the previous poll; null until the first poll so jobs that
 // finished before the browser started do not raise notifications.
 let lastStatuses = null;
+// Jobs already notified for their current finish, so no code path can notify one twice
+const notified = new Set();
+const NOTIFIED_MAX = 1000;
 let lastHealthAt = 0;
 let pollTimer = null;
 let polling = false;
@@ -117,6 +120,21 @@ async function callNativeHost() {
     nativeError = constants.nativeErrorCode(err);
     console.warn("[yt-dl] Native host unavailable:", err && err.message);
     return false;
+  }
+}
+
+/**
+ * Let the window of a file the helper opens next come to the front. The helper's server has
+ * no right to take the foreground on Windows, so a player or Explorer window it opens would
+ * stay behind Firefox; the native host, freshly started by Firefox, can grant that right.
+ * Failures are ignored: the file still opens, just in the background.
+ * @returns {Promise<void>} Resolves once the host has answered or failed.
+ */
+async function allowForeground() {
+  try {
+    await browser.runtime.sendNativeMessage(NATIVE_HOST, {command: "foreground"});
+  } catch (err) {
+    console.warn("[yt-dl] Could not allow the foreground:", err && err.message);
   }
 }
 
@@ -268,6 +286,11 @@ async function startBackend() {
  */
 function notifyJob(job) {
   if (!settings.notifications) return;
+  // At most one notification per finish; handleTransitions forgets a job once it runs again
+  if (notified.has(job.id)) return;
+  if (notified.size >= NOTIFIED_MAX) notified.clear();
+  notified.add(job.id);
+  console.info(`[yt-dl] Notifying ${job.status} for job ${job.id}`);
   const name = job.title || job.filename || job.url;
   const done = job.status === "complete";
   browser.notifications
@@ -311,6 +334,7 @@ function handleTransitions(jobs) {
   if (lastStatuses) {
     const groups = new Map();
     for (const job of jobs) {
+      if (ACTIVE.has(job.status)) notified.delete(job.id);
       const prev = lastStatuses.get(job.id);
       const finishedNow = prev !== job.status && (job.status === "complete" || job.status === "error");
       if (!job.group_id) {
@@ -538,6 +562,7 @@ const HANDLERS = {
   async jobAction(message) {
     if (!isText(message.id)) return {ok: false, error: "Missing job id", status: 400};
     if (!JOB_ACTIONS.has(message.action)) return {ok: false, error: "Unknown action", status: 400};
+    if (message.action === "open" || message.action === "reveal") await allowForeground();
     const res = await withBackend(() => api.jobAction(message.id, message.action));
     if (!res.ok) return res;
     poll();
@@ -590,9 +615,11 @@ browser.notifications.onClicked.addListener((notificationId) => {
   }
   browser.notifications.clear(notificationId);
   if (!job || !state.backend.reachable) return;
-  authed(() => api.jobAction(job.id, "reveal")).then((res) => {
-    if (!res.ok) console.warn("[yt-dl] Could not show file:", res.error);
-  });
+  allowForeground()
+    .then(() => authed(() => api.jobAction(job.id, "reveal")))
+    .then((res) => {
+      if (!res.ok) console.warn("[yt-dl] Could not show file:", res.error);
+    });
 });
 
 browser.browserAction.setBadgeBackgroundColor({color: "#cc0000"});
