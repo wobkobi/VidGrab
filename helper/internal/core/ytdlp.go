@@ -25,6 +25,7 @@ const (
 	ProgressPrefix = "YTDLP_PROGRESS "
 	FilePrefix     = "YTDLP_FILE "
 	TitlePrefix    = "YTDLP_TITLE "
+	ChannelPrefix  = "YTDLP_CHANNEL "
 	CodecsPrefix   = "YTDLP_CODECS "
 )
 
@@ -332,6 +333,8 @@ func downloadPrefix(outDir, template string, cookies bool, fragments int, tools 
 		"--concurrent-fragments", strconv.Itoa(fragments),
 		"--progress-template", "download:"+ProgressPrefix+"%(progress)j",
 		"--print", "before_dl:"+TitlePrefix+"%(title)s",
+		// The channel name, else the uploader; "|" makes a video with neither print nothing, not "NA"
+		"--print", "before_dl:"+ChannelPrefix+"%(channel,uploader|)s",
 		"--print", "after_move:"+FilePrefix+"%(filepath)s",
 		// A "%" in the folder would otherwise start a template field
 		"-o", filepath.Join(strings.ReplaceAll(outDir, "%", "%%"), template),
@@ -596,6 +599,17 @@ func sizeOf(format map[string]any) float64 {
 // isNoneCodec reports whether a codec field is missing, null or "none".
 func isNoneCodec(v any) bool { return v == nil || v == "none" }
 
+// ChannelOf returns the channel name from yt-dlp JSON for a video or a flat playlist entry,
+// falling back to the uploader, or "" when neither is a non-empty string.
+func ChannelOf(raw map[string]any) string {
+	for _, key := range []string{"channel", "uploader"} {
+		if name, _ := raw[key].(string); strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
+}
+
 // SummariseInfo reduces raw yt-dlp JSON from FetchRawInfo to the /info response. kind is the
 // ParsedUrl kind.
 //
@@ -760,6 +774,7 @@ type ParseUpdate struct {
 	Eta        string
 	Processing bool
 	Title      string
+	Channel    string
 	Filepath   string
 }
 
@@ -868,6 +883,12 @@ func (p *OutputParser) Feed(rawLine string) *ParseUpdate {
 	}
 	if strings.HasPrefix(line, TitlePrefix) {
 		return &ParseUpdate{Title: strings.TrimSpace(line[len(TitlePrefix):])}
+	}
+	if strings.HasPrefix(line, ChannelPrefix) {
+		if channel := strings.TrimSpace(line[len(ChannelPrefix):]); channel != "" && channel != "NA" {
+			return &ParseUpdate{Channel: channel}
+		}
+		return nil
 	}
 	if strings.HasPrefix(line, "ERROR:") {
 		p.LastError = CleanError(line)

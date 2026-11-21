@@ -110,13 +110,16 @@ func (q *JobQueue) runSized(j *job, runID int, tools core.Tools) outcome {
 		}
 		return res
 	}
-	if title, _ := raw["title"].(string); title != "" {
-		q.mu.Lock()
-		if j.title == "" {
-			j.title = title
-		}
-		q.mu.Unlock()
+	title, _ := raw["title"].(string)
+	channel := core.ChannelOf(raw)
+	q.mu.Lock()
+	if j.title == "" {
+		j.title = title
 	}
+	if j.channel == "" {
+		j.channel = channel
+	}
+	q.mu.Unlock()
 
 	limitMB := j.options.MaxSizeMB
 	formats := core.FitFormats(raw)

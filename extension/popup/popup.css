@@ -226,6 +226,16 @@ body {
   white-space: nowrap;
 }
 
+.job-channel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-channel:empty {
+  display: none;
+}
+
 .tag {
   flex: none;
   font-size: 10.5px;

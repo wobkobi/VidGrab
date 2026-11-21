@@ -835,13 +835,32 @@ func TestChannelFolderDropsTabSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if str(jobs[0].GroupTitle) != "Jawed" {
-		t.Fatalf("group title %q", str(jobs[0].GroupTitle))
+	if str(jobs[0].GroupTitle) != "Jawed" || str(jobs[0].Channel) != "Jawed" {
+		t.Fatalf("group title %q, channel %q", str(jobs[0].GroupTitle), str(jobs[0].Channel))
 	}
 	waitFor(t, func() bool { return starter.count() == 1 })
 	out := starter.proc(0).argAfter("-o")
 	if !strings.HasPrefix(out, filepath.Join(dir, "Jawed")) || strings.Contains(out, "Videos") {
 		t.Fatalf("output template %q", out)
+	}
+}
+
+func TestPlaylistEntriesKeepTheirChannel(t *testing.T) {
+	fetcher := func(string) (map[string]any, error) {
+		return map[string]any{"title": "Mix", "entries": []any{
+			map[string]any{"id": videos[0], "title": "a", "channel": "First"},
+			map[string]any{"id": videos[1], "title": "b", "uploader": "second"},
+			map[string]any{"id": videos[2], "title": "c"},
+		}}, nil
+	}
+	q := makeQueue(t, t.TempDir(), newBlockingStarter(), func(c *QueueConfig) { c.FetchInfo = fetcher })
+	jobs, err := q.Create("https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE", defaults(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{str(jobs[0].Channel), str(jobs[1].Channel), str(jobs[2].Channel)}
+	if !slices.Equal(got, []string{"First", "second", "<nil>"}) {
+		t.Fatalf("channels %q", got)
 	}
 }
 
@@ -902,7 +921,7 @@ func TestJobShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := marshalMap(t, jobs[0])
-	want := []string{"id", "group_id", "group_title", "url", "title", "kind", "status", "stage", "percent", "speed",
+	want := []string{"id", "group_id", "group_title", "url", "title", "channel", "kind", "status", "stage", "percent", "speed",
 		"eta", "filename", "filepath", "error", "detail", "options", "created_at"}
 	if got := sortedKeys(raw); !slices.Equal(got, sorted(want)) {
 		t.Fatalf("keys %v", got)
