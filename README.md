@@ -65,7 +65,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, submits the add-on to AMO as a listed version, builds the four helpers, and creates the `v<version>` GitHub release with the helpers and `updates.json`. AMO reviews the version and Firefox updates installed copies from AMO once it is approved; `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
+Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, submits the add-on to AMO as a listed version, builds the four helpers, and creates the `v<version>` GitHub release with the helpers, `updates.json` and notes made from `CHANGELOG.md`. AMO reviews the version and Firefox updates installed copies from AMO once it is approved; `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing. Every version needs a `## [x.y.z]` section in `CHANGELOG.md`, with each bullet naming its area (`- **Popup:** ...`); the release stops before submitting to AMO when it is missing. `node scripts/release-notes.mjs <version>` prints the notes it would publish. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
 
 ## Usage
 
@@ -187,6 +187,7 @@ helper/
   internal/system/          Install dirs, tool downloads, yt-dlp updates, native host, install/uninstall, OS specifics
 scripts/build-helper.mjs    Cross-compile the helper into dist/
 scripts/build-xpi.mjs       Package the add-on as an unsigned .xpi in dist/
+scripts/release-notes.mjs   Release notes from CHANGELOG.md, grouped by area
 extension/
   manifest.json
   background.js             Only HTTP client: message routing, polling, badge, notifications

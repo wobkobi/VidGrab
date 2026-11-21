@@ -60,7 +60,7 @@ jobs:
           node-version: 24
 
       - name: Test
-        run: node --test extension/tests
+        run: node --test extension/tests scripts/release-notes.test.mjs
 
       # Default rules, the same ones AMO applies to a listed submission
       - name: Lint
