@@ -1,6 +1,6 @@
 # VidGrab
 
-A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.4.0.
+A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels through a small helper program running on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg. Version 2.4.1.
 
 ## What it does
 
