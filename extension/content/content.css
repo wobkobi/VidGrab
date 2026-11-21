@@ -3,7 +3,9 @@
 
 .yt-dl-split,
 .yt-dl-list-btn,
-.yt-dl-panel {
+.yt-dl-panel,
+.yt-dl-menu-item,
+.yt-dl-toast {
   --yt-dl-fb-text: #0f0f0f;
   --yt-dl-fb-text-2: #606060;
   --yt-dl-fb-chip: rgba(0, 0, 0, 0.05);
@@ -34,7 +36,9 @@
 
 html[dark] .yt-dl-split,
 html[dark] .yt-dl-list-btn,
-html[dark] .yt-dl-panel {
+html[dark] .yt-dl-panel,
+html[dark] .yt-dl-menu-item,
+html[dark] .yt-dl-toast {
   --yt-dl-fb-text: #f1f1f1;
   --yt-dl-fb-text-2: #aaa;
   --yt-dl-fb-chip: rgba(255, 255, 255, 0.1);
@@ -567,4 +571,45 @@ html[dark] .yt-dl-panel {
   .yt-dl-fill {
     transition: none;
   }
+}
+
+/* Three-dot menu item (menu.js), sized like YouTube's own menu rows */
+.yt-dl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 36px;
+  padding: 0 36px 0 16px;
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.yt-dl-menu-item:hover,
+.yt-dl-menu-item:focus-visible {
+  background: var(--yt-dl-chip-hover);
+  outline: none;
+}
+
+/* Bottom-left notice after a menu download, in the same place as YouTube's toasts */
+.yt-dl-toast {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 2300;
+  max-width: min(480px, calc(100vw - 48px));
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--yt-dl-text);
+  color: var(--yt-dl-surface);
+  font-size: 14px;
+  line-height: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.yt-dl-toast[data-tone="error"] {
+  background: var(--yt-dl-error);
+  color: #fff;
 }

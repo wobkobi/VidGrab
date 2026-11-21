@@ -39,6 +39,10 @@ const (
 // MaxGroupItems caps how many child jobs one playlist or channel may queue.
 const MaxGroupItems = 1000
 
+// MaxFinishedJobs caps how many complete, failed and cancelled jobs the queue remembers; the
+// oldest are forgotten first and their files are untouched. Active jobs never count.
+const MaxFinishedJobs = 500
+
 // maxLineBytes bounds one line of yt-dlp output; anything longer is cut, never buffered.
 const maxLineBytes = 1 << 20
 
@@ -99,6 +103,7 @@ type JobView struct {
 	GroupTitle *string         `json:"group_title"`
 	URL        string          `json:"url"`
 	Title      *string         `json:"title"`
+	Channel    *string         `json:"channel"`
 	Kind       string          `json:"kind"`
 	Status     string          `json:"status"`
 	Stage      string          `json:"stage"`
@@ -125,6 +130,7 @@ type job struct {
 	groupID    string
 	groupTitle string
 	title      string
+	channel    string
 	status     string
 	stage      string // StageConverting while a size-limited job re-encodes, else ""
 	percent    float64
@@ -169,6 +175,7 @@ func (j *job) view() JobView {
 		GroupTitle: optional(j.groupTitle),
 		URL:        j.url,
 		Title:      optional(j.title),
+		Channel:    optional(j.channel),
 		Kind:       j.kind,
 		Status:     j.status,
 		Stage:      j.stage,
@@ -462,7 +469,7 @@ func (q *JobQueue) Create(rawURL string, options core.JobOptions, ranges []core.
 // expandEntries turns flat playlist/channel JSON into one job per selected, well-formed entry,
 // all sharing a group id and a subfolder named after the list.
 func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobOptions, ranges []core.ItemRange, root string) ([]*job, error) {
-	type entry struct{ id, title string }
+	type entry struct{ id, title, channel string }
 	var entries []entry
 	list, _ := info["entries"].([]any)
 	for _, item := range list {
@@ -478,7 +485,7 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 			continue
 		}
 		title, _ := e["title"].(string)
-		entries = append(entries, entry{id, title})
+		entries = append(entries, entry{id, title, core.ChannelOf(e)})
 	}
 	selected := core.SelectItems(entries, ranges)
 	if len(selected) == 0 {
@@ -504,7 +511,13 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 		if err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, newJob(watch, e.id, options, outDir, e.title, groupID, groupTitle))
+		j := newJob(watch, e.id, options, outDir, e.title, groupID, groupTitle)
+		j.channel = e.channel
+		// Entries of a channel listing often leave out their channel, which is the list itself
+		if j.channel == "" && parsed.Kind == core.KindChannel {
+			j.channel = groupTitle
+		}
+		jobs = append(jobs, j)
 	}
 	return jobs, nil
 }
@@ -657,6 +670,31 @@ func (q *JobQueue) ClearFinished() int {
 	}
 	q.order = kept
 	return removed
+}
+
+// pruneFinishedLocked forgets the oldest finished jobs beyond MaxFinishedJobs. A finished job
+// whose process is still exiting is skipped, as in ClearFinished. Callers hold q.mu.
+func (q *JobQueue) pruneFinishedLocked() {
+	finished := 0
+	for _, id := range q.order {
+		if j := q.jobs[id]; j.isFinishedStatus() && !j.running {
+			finished++
+		}
+	}
+	excess := finished - MaxFinishedJobs
+	if excess <= 0 {
+		return
+	}
+	kept := q.order[:0]
+	for _, id := range q.order {
+		if j := q.jobs[id]; excess > 0 && j.isFinishedStatus() && !j.running {
+			delete(q.jobs, id)
+			excess--
+			continue
+		}
+		kept = append(kept, id)
+	}
+	q.order = kept
 }
 
 // ApplySettings updates the queue settings; a higher concurrency starts waiting jobs straight
@@ -896,6 +934,9 @@ func (q *JobQueue) download(j *job, runID int, args []string, parser *core.Outpu
 		if update.Title != "" && j.title == "" {
 			j.title = update.Title
 		}
+		if update.Channel != "" && j.channel == "" {
+			j.channel = update.Channel
+		}
 		if update.Filepath != "" && showFile {
 			j.filepath = update.Filepath
 			j.filename = filepath.Base(update.Filepath)
@@ -1001,6 +1042,7 @@ func (q *JobQueue) settle(j *job, runID int, res outcome) {
 		q.removeWork(j, res.keep)
 	}
 	q.mu.Lock()
+	q.pruneFinishedLocked()
 	q.scheduleLocked()
 	q.mu.Unlock()
 }

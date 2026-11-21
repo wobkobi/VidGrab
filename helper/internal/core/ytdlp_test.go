@@ -149,7 +149,8 @@ func TestProgressAndFileTemplates(t *testing.T) {
 		t.Errorf("progress template %q", got)
 	}
 	prints := printsOf(args)
-	if !slices.Contains(prints, "after_move:YTDLP_FILE %(filepath)s") || !slices.Contains(prints, "before_dl:YTDLP_TITLE %(title)s") {
+	if !slices.Contains(prints, "after_move:YTDLP_FILE %(filepath)s") || !slices.Contains(prints, "before_dl:YTDLP_TITLE %(title)s") ||
+		!slices.Contains(prints, "before_dl:YTDLP_CHANNEL %(channel,uploader|)s") {
 		t.Errorf("prints %v", prints)
 	}
 	if got := valueAfter(t, args, "-o"); got != filepath.Join(testOut, "%(title)s [%(id)s].%(ext)s") {
@@ -247,6 +248,35 @@ func percentOf(t *testing.T, u *ParseUpdate) float64 {
 		t.Fatalf("update has no percent: %+v", u)
 	}
 	return *u.Percent
+}
+
+func TestParserChannel(t *testing.T) {
+	var parser OutputParser
+	if u := parser.Feed("YTDLP_CHANNEL  jawed "); u == nil || u.Channel != "jawed" || u.HasProgress() {
+		t.Errorf("channel update %+v", u)
+	}
+	for _, line := range []string{"YTDLP_CHANNEL ", "YTDLP_CHANNEL NA"} {
+		if u := parser.Feed(line); u != nil {
+			t.Errorf("%q gave %+v", line, u)
+		}
+	}
+}
+
+func TestChannelOf(t *testing.T) {
+	cases := []struct {
+		raw  map[string]any
+		want string
+	}{
+		{map[string]any{"channel": "Jawed", "uploader": "jawed"}, "Jawed"},
+		{map[string]any{"channel": " ", "uploader": "jawed"}, "jawed"},
+		{map[string]any{"channel": nil, "uploader": 5}, ""},
+		{map[string]any{}, ""},
+	}
+	for _, c := range cases {
+		if got := ChannelOf(c.raw); got != c.want {
+			t.Errorf("ChannelOf(%v) = %q, want %q", c.raw, got, c.want)
+		}
+	}
 }
 
 func TestParserMergeRunIsMonotonic(t *testing.T) {

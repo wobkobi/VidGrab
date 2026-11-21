@@ -124,3 +124,6 @@ func startQuiet(name string, args ...string) error {
 func userHomeSubdir(parts ...string) string {
 	return filepath.Join(append([]string{homeDir()}, parts...)...)
 }
+
+// AllowForeground does nothing: macOS and Linux let a newly opened window take focus.
+func AllowForeground() error { return nil }

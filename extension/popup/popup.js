@@ -109,6 +109,7 @@ function metaText(job) {
   const label = format.statusLabel(job.status);
   switch (job.status) {
     case "downloading": {
+      if (format.isPreparing(job)) return "Preparing...";
       const parts = [format.percent(job.percent)];
       if (job.speed) parts.push(job.speed);
       const eta = format.eta(job.eta);
@@ -150,6 +151,7 @@ async function runAction(id, action, button) {
 function createRow(id) {
   const row = {el: el("div", "job"), status: null};
   row.title = el("span", "job-title");
+  row.channel = el("div", "job-channel muted small");
   row.tag = el("span", "tag");
   const head = el("div", "job-head");
   head.append(row.title, row.tag);
@@ -160,7 +162,7 @@ function createRow(id) {
   row.actions = el("div", "actions");
   const foot = el("div", "job-foot");
   foot.append(row.meta, row.actions);
-  row.el.append(head, bar, foot);
+  row.el.append(head, row.channel, bar, foot);
   rows.set(id, row);
   return row;
 }
@@ -172,8 +174,11 @@ function createRow(id) {
  */
 function updateRow(row, job) {
   const title = job.title || job.filename || job.url;
+  const channel = typeof job.channel === "string" ? job.channel.trim() : "";
   row.title.textContent = title;
   row.title.title = title;
+  row.channel.textContent = channel;
+  row.channel.title = channel;
   row.tag.textContent = formatTag(job.options);
   row.el.dataset.status = job.status;
   const pct = job.status === "complete" ? 100 : Math.min(100, Math.max(0, Number(job.percent) || 0));

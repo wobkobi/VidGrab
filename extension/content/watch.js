@@ -12,6 +12,9 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   const FLASH_MS = 4000;
   // How long "Starting..." waits for the new job to show up in the job list before giving up
   const START_WAIT_MS = 5000;
+  // Longer one-off messages show as "Error" with the text in the tooltip, so the button
+  // never cuts a sentence off ("Helper not installed" still fits)
+  const FLASH_LABEL_MAX = 24;
   const ACTIVE = new Set(YTDL.constants.ACTIVE_STATUSES);
 
   // Fallbacks tried after the configurable selector, newest layout first
@@ -65,7 +68,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     let doneUntil = 0;
     let lastJobId = null;
     let lastStatus = null;
-    // Label min-width held for the current job so it only grows ("Queued" > "45%" > "Converting 45%")
+    // Label min-width held for the current job, starting from the idle "Download" width, so it
+    // only grows ("Download" > "45%" > "Converting 45%")
     let heldWidth = 0;
     let startingUntil = 0;
     let startingTimer = null;
@@ -113,7 +117,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
         if (job && ACTIVE.has(job.status)) startingUntil = 0;
         else return { text: "Starting...", tone: "busy", progress: null, action: "none", title: "Starting..." };
       }
-      if (flash) return { text: flash, tone: "error", progress: null, action: "download", title: flash };
+      if (flash) {
+        const text = flash.length > FLASH_LABEL_MAX ? "Error" : flash;
+        return { text, tone: "error", progress: null, action: "download", title: flash };
+      }
       if (content.backendDown() && !(job && ACTIVE.has(job.status))) {
         if (content.helperMissing()) {
           const title = `${content.helperMissingText(content.backend)} Click to open the download page.`;
@@ -136,6 +143,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
           case "queued":
             return { text: "Queued", tone: "active", progress: 0, action: "none", title: `${name} is queued` };
           case "downloading": {
+            if (YTDL.format.isPreparing(job)) return { text: "Preparing", tone: "active", progress: 0, action: "none", title: `Getting ${name} ready to download` };
             const pct = Math.max(0, Math.min(100, Number(job.percent) || 0));
             return { text: YTDL.format.percent(pct), tone: "active", progress: pct, action: "none", title: `Downloading ${name}` };
           }
@@ -147,8 +155,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
             return { text: "Processing", tone: "active", progress: 100, action: "none", title: `Processing ${name}` };
           case "paused":
             return { text: "Paused", tone: "paused", progress: Number(job.percent) || 0, action: "resume", title: "Click to resume" };
+          // yt-dlp errors run long ("unable to download video data: HTTP Error 403: ..."), so
+          // the button says what to do and the tooltip and popup carry the message
           case "error":
-            return { text: job.error || "Download failed", tone: "error", progress: null, action: "retry", title: `${job.error || "Download failed"} - click to retry` };
+            return { text: "Failed - retry", tone: "error", progress: null, action: "retry", title: `${job.error || "Download failed"} - click to retry` };
           case "complete":
             if (Date.now() < doneUntil) return { text: "Done", tone: "done", progress: null, action: "download", title: "Downloaded - click to download again" };
             break;
@@ -206,6 +216,13 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     function render() {
       const v = view();
       currentAction = v.action;
+      // Entering a held state: start from the width the label has now ("Download"), so a
+      // short label like "5%" never makes the button narrower than it was before the click
+      const job = videoId ? content.latestJobFor(videoId) : null;
+      const active = Boolean(job && ACTIVE.has(job.status));
+      // "Done" is held too, or the short label would shrink the button for its 3 seconds
+      const hold = active || v.tone === "busy" || v.tone === "done";
+      if (hold && !heldWidth && !compact) heldWidth = Math.ceil(labelNode.getBoundingClientRect().width);
       labelNode.textContent = v.text;
       root.dataset.tone = v.tone;
       main.title = v.title;
@@ -213,10 +230,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       main.setAttribute("aria-disabled", String(v.action === "none"));
       if (v.progress === null) root.style.removeProperty("--yt-dl-progress");
       else root.style.setProperty("--yt-dl-progress", `${v.progress}%`);
-      const job = videoId ? content.latestJobFor(videoId) : null;
-      const active = Boolean(job && ACTIVE.has(job.status));
       setArrowMode(active ? job.id : null);
-      holdWidth(active || v.tone === "busy");
+      holdWidth(hold);
     }
 
     /**
@@ -343,12 +358,16 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   let button = null;
 
   /**
-   * Find where the button goes: the configured selector first, then the fallbacks.
+   * Find where the button goes: the configured selector first, then the fallbacks. The video's
+   * own action row is searched before the whole page, because info panels above the title
+   * (the Wikipedia or fact-check boxes) carry a #top-level-buttons-computed of their own that
+   * comes first in the document.
    * @returns {Element|null} Container element.
    */
   function findContainer() {
-    const configured = content.settings.selectors.watchContainer;
-    return content.findFirst([configured, ...WATCH_FALLBACKS]);
+    const selectors = [content.settings.selectors.watchContainer, ...WATCH_FALLBACKS];
+    const actions = content.findFirst(["ytd-watch-metadata #actions", "ytd-watch-metadata"]);
+    return (actions && content.findFirst(selectors, actions)) || content.findFirst(selectors);
   }
 
   /**
