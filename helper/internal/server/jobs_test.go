@@ -728,6 +728,36 @@ func TestClearFinishedKeepsActive(t *testing.T) {
 	}
 }
 
+func TestPruneFinishedKeepsNewestAndActive(t *testing.T) {
+	q := NewJobQueue(QueueConfig{})
+	add := func(id, status string, running bool) {
+		q.jobs[id] = &job{id: id, status: status, running: running}
+		q.order = append(q.order, id)
+	}
+	add("queued", StatusQueued, false)
+	add("exiting", StatusCancelled, true)
+	for i := 0; i < MaxFinishedJobs+3; i++ {
+		add(fmt.Sprintf("done-%d", i), StatusComplete, false)
+	}
+	q.pruneFinishedLocked()
+	if len(q.order) != len(q.jobs) {
+		t.Fatalf("order %d, jobs %d", len(q.order), len(q.jobs))
+	}
+	for _, gone := range []string{"done-0", "done-1", "done-2"} {
+		if _, ok := q.jobs[gone]; ok {
+			t.Errorf("%s should be pruned", gone)
+		}
+	}
+	for _, kept := range []string{"queued", "exiting", "done-3", fmt.Sprintf("done-%d", MaxFinishedJobs+2)} {
+		if _, ok := q.jobs[kept]; !ok {
+			t.Errorf("%s should be kept", kept)
+		}
+	}
+	if q.order[0] != "queued" || q.order[1] != "exiting" || q.order[2] != "done-3" {
+		t.Errorf("order %v", q.order[:3])
+	}
+}
+
 func TestPlaylistExpansionWithRange(t *testing.T) {
 	dir := t.TempDir()
 	var calls []string

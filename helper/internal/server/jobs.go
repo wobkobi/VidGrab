@@ -39,6 +39,10 @@ const (
 // MaxGroupItems caps how many child jobs one playlist or channel may queue.
 const MaxGroupItems = 1000
 
+// MaxFinishedJobs caps how many complete, failed and cancelled jobs the queue remembers; the
+// oldest are forgotten first and their files are untouched. Active jobs never count.
+const MaxFinishedJobs = 500
+
 // maxLineBytes bounds one line of yt-dlp output; anything longer is cut, never buffered.
 const maxLineBytes = 1 << 20
 
@@ -659,6 +663,31 @@ func (q *JobQueue) ClearFinished() int {
 	return removed
 }
 
+// pruneFinishedLocked forgets the oldest finished jobs beyond MaxFinishedJobs. A finished job
+// whose process is still exiting is skipped, as in ClearFinished. Callers hold q.mu.
+func (q *JobQueue) pruneFinishedLocked() {
+	finished := 0
+	for _, id := range q.order {
+		if j := q.jobs[id]; j.isFinishedStatus() && !j.running {
+			finished++
+		}
+	}
+	excess := finished - MaxFinishedJobs
+	if excess <= 0 {
+		return
+	}
+	kept := q.order[:0]
+	for _, id := range q.order {
+		if j := q.jobs[id]; excess > 0 && j.isFinishedStatus() && !j.running {
+			delete(q.jobs, id)
+			excess--
+			continue
+		}
+		kept = append(kept, id)
+	}
+	q.order = kept
+}
+
 // ApplySettings updates the queue settings; a higher concurrency starts waiting jobs straight
 // away, while fragments and cookies apply to jobs started from now on.
 func (q *JobQueue) ApplySettings(concurrency, fragments int, cookies bool) {
@@ -1001,6 +1030,7 @@ func (q *JobQueue) settle(j *job, runID int, res outcome) {
 		q.removeWork(j, res.keep)
 	}
 	q.mu.Lock()
+	q.pruneFinishedLocked()
 	q.scheduleLocked()
 	q.mu.Unlock()
 }
