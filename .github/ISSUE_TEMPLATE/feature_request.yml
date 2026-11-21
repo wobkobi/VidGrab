@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest something VidGrab could do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggestion
+      description: What you'd like VidGrab to do, and what you'd use it for.
+    validations:
+      required: true

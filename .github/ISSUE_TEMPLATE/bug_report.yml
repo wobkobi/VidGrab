@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in VidGrab doesn't work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [Troubleshooting](https://github.com/wobkobi/VidGrab#troubleshooting) first: "helper not installed", HTTP 403 and "Requested format is not available" usually have a quick fix there.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead. Include any error shown on the button or in the popup.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open https://www.youtube.com/watch?v=...
+        2. Choose 1080p, max size 20 MB
+        3. Click Download
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: YouTube link
+      description: The video, Short, playlist or channel it happened on.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Add-on and helper versions (the popup shows the helper, ffmpeg and yt-dlp versions) and your Firefox version.
+      placeholder: Add-on 2.5.1, helper 2.5.1, yt-dlp 2026.11.01, Firefox 145
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Helper log
+      description: The last lines of data/server.log in the helper's install folder, if the problem is with a download.
+      render: text
