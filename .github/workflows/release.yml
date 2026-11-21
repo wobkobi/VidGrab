@@ -74,7 +74,8 @@ jobs:
 
       # --approval-timeout 0 returns once AMO has the version, without waiting for the review,
       # which can take days. Firefox picks the version up from AMO after it is approved. AMO
-      # needs a licence on every listed version, which amo-metadata.json supplies.
+      # needs a licence on every listed version and categories on the add-on, which
+      # amo-metadata.json supplies.
       - name: Submit the add-on to AMO (listed)
         if: steps.version.outputs.new == 'true' && !inputs.dry_run
         # web-ext reads WEB_EXT_API_KEY and WEB_EXT_API_SECRET from the environment itself
