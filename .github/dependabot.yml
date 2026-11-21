@@ -1,0 +1,26 @@
+# Dependabot opens at most 5 version-update PRs per ecosystem, and once 5 are open it
+# skips the scheduled run entirely - including the step that closes PRs a manual update
+# has already superseded. Minor and patch bumps share one grouped PR so a couple of stuck
+# PRs can't stop updates silently.
+
+version: 2
+updates:
+  # The helper's Go modules (go.mod lives in helper/, not the repo root)
+  - package-ecosystem: "gomod"
+    directory: "/helper"
+    schedule:
+      interval: "daily"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Keeps the `uses:` tags in .github/workflows current. Without this, pinned
+  # actions silently fall behind and the runner warns about their declared
+  # Node runtime (node20 actions forced onto node24).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]

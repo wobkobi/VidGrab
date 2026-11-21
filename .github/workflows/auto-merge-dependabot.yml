@@ -1,0 +1,149 @@
+name: Auto-merge Dependabot PRs
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue Dependabot PRs for auto-merge
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const headSha = context.payload.workflow_run.head_sha;
+            const defaultBranch = context.payload.repository.default_branch;
+
+            /**
+             * Leading major/minor of a semver string.
+             * @param {string} v - Version as Dependabot writes it, with or without a leading "v".
+             * @returns {{major: number, minor: number} | null} Parsed parts, or null when unparseable.
+             */
+            const parse = (v) => {
+              const m = /^v?(\d+)\.(\d+)/.exec(v.trim());
+              return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
+            };
+
+            /**
+             * Whether one version bump can break the build. Pre-1.0 packages have no
+             * major to bump, so a minor is the breaking step there and 0.4.x > 0.5.x
+             * counts. An unparseable version is treated as breaking rather than guessed at.
+             * @param {string} fromVersion - Version before the bump.
+             * @param {string} toVersion - Version after the bump.
+             * @returns {boolean} True when the bump should be left for a person.
+             */
+            const isBreaking = (fromVersion, toVersion) => {
+              const from = parse(fromVersion);
+              const to = parse(toVersion);
+              if (!from || !to) return true;
+              if (from.major !== to.major) return true;
+              return from.major === 0 && from.minor !== to.minor;
+            };
+
+            /**
+             * Every version pair a Dependabot PR states. A single update says it in the
+             * title ("from 1.2.3 to 1.2.4"); a grouped update lists one "Updates `pkg`
+             * from 1.2.3 to 1.2.4" line per package in the body, versions sometimes
+             * wrapped in backticks. A version is dot-separated segments, so a sentence-
+             * ending full stop is not swallowed into it.
+             * @param {string} title - Pull request title.
+             * @param {string | null} body - Pull request body; null when empty.
+             * @returns {Array<[string, string]>} Unique [from, to] pairs, in order of appearance.
+             */
+            const versionPairs = (title, body) => {
+              const ver = String.raw`\`?v?(\d[\w+-]*(?:\.[\w+-]+)*)\`?`;
+              const re = new RegExp(String.raw`\bfrom ${ver} to ${ver}`, 'g');
+              const seen = new Set();
+              const pairs = [];
+              for (const m of `${title}\n${body ?? ''}`.matchAll(re)) {
+                const key = `${m[1]}>${m[2]}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                pairs.push([m[1], m[2]]);
+              }
+              return pairs;
+            };
+
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            for (const pr of prs) {
+              if (pr.user?.login !== 'dependabot[bot]') continue;
+              if (pr.draft) continue;
+              if (pr.head.sha !== headSha) continue;
+              if (pr.base.ref !== defaultBranch) continue;
+
+              // Majors are held back for a person to judge: a major can change runtime
+              // behaviour the build never exercises, or clash with a peer range, so a
+              // green CI run does not mean it is safe to take. Majors that are known to
+              // be blocked are also listed under `ignore` in dependabot.yml so they do
+              // not sit open and count towards the open-PR limit. A grouped PR is only
+              // merged when every bump it lists is safe; one breaking bump holds the lot.
+              const pairs = versionPairs(pr.title, pr.body);
+              if (!pairs.length) {
+                core.info(`#${pr.number} left for review: no version bump found in "${pr.title}"`);
+                continue;
+              }
+              const breaking = pairs.filter(([from, to]) => isBreaking(from, to));
+              if (breaking.length) {
+                const list = breaking.map(([from, to]) => `${from} > ${to}`).join(', ');
+                core.info(`#${pr.number} left for review: breaking bump (${list})`);
+                continue;
+              }
+
+              // Queue the squash merge instead of merging immediately. GitHub runs it
+              // once every required check passes, so this does not race a check that
+              // is still pending (a deployment preview, CodeQL) - an immediate merge
+              // then returns 405 "Required status check ... is pending" and fails the job.
+              //
+              // No review is submitted: the default branch requires zero approving
+              // reviews, and GITHUB_TOKEN may only approve when the repo enables "Allow
+              // GitHub Actions to create and approve pull requests", so an unguarded
+              // approve call fails the whole job with a 422.
+              try {
+                await github.graphql(
+                  `mutation($id: ID!) {
+                    enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) {
+                      clientMutationId
+                    }
+                  }`,
+                  { id: pr.node_id },
+                );
+                core.info(`Auto-merge queued for #${pr.number}`);
+              } catch (e) {
+                const message = String(e?.message ?? e);
+                // "Clean status" means nothing is left to wait for, so GitHub
+                // refuses to queue. Without this fallback the PR would sit open
+                // forever behind a warning nobody reads.
+                if (/clean status/i.test(message)) {
+                  try {
+                    await github.rest.pulls.merge({
+                      owner,
+                      repo,
+                      pull_number: pr.number,
+                      merge_method: 'squash',
+                    });
+                    core.info(`Merged #${pr.number} directly - no checks left to wait for`);
+                  } catch (mergeError) {
+                    core.warning(`Could not merge #${pr.number}: ${mergeError.message}`);
+                  }
+                } else {
+                  // Most often "Allow auto-merge" is off in repo settings, which
+                  // makes every run a silent no-op until someone reads this line.
+                  core.warning(`Could not enable auto-merge for #${pr.number}: ${message}`);
+                }
+              }
+            }

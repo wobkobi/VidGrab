@@ -54,12 +54,18 @@ Firefox installed as a Snap or Flatpak on Linux cannot start programs outside it
 
 ### Installing the add-on
 
-Temporary add-ons (`about:debugging#/runtime/this-firefox` > **Load Temporary Add-on...** > `extension\manifest.json`) are removed when Firefox restarts. To keep it installed, either:
+The easiest way is the signed `vidgrab-<version>.xpi` from the [latest release](https://github.com/wobkobi/yt-dl-firefox/releases/latest): open it in Firefox and confirm. The helper downloads for every system are on the same page. Firefox then updates the add-on by itself, checking about once a day.
+
+For development, temporary add-ons (`about:debugging#/runtime/this-firefox` > **Load Temporary Add-on...** > `extension\manifest.json`) are removed when Firefox restarts. To keep it installed, either:
 
 - Use Firefox Developer Edition or Nightly, set `xpinstall.signatures.required` to `false` in `about:config`, then run `npx web-ext build -s extension` and install the `.zip` from `about:addons` > gear menu > **Install Add-on From File...**; or
 - Sign it as an unlisted add-on with your AMO API keys: `npx web-ext sign -s extension --channel unlisted --api-key ... --api-secret ...`, then install the signed `.xpi` in normal Firefox. Each signing needs a new version in `manifest.json`.
 
 The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Firefox registration only allows that id.
+
+### Releases
+
+Merging a new `version` in `extension/manifest.json` into main publishes it: `.github/workflows/release.yml` runs the tests, signs the add-on as unlisted on AMO, builds the six helpers, and creates the `v<version>` GitHub release with the `.xpi`, the helpers and `updates.json`. The manifest's `update_url` points at `updates.json` on the latest release, so installed copies update themselves. A push without a version bump releases nothing. Signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).
 
 ## Usage
 

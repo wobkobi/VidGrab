@@ -7,6 +7,7 @@
     "gecko": {
       "id": "yt-dl-firefox@local",
       "strict_min_version": "140.0",
+      "update_url": "https://github.com/wobkobi/yt-dl-firefox/releases/latest/download/updates.json",
       "data_collection_permissions": {
         "required": ["none"]
       }
