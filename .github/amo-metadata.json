@@ -1,5 +1,6 @@
 {
   "version": {
-    "license": "MIT"
+    "license": "MIT",
+    "approval_notes": "VidGrab needs its companion helper program, which the add-on reaches through native messaging (host name \"vidgrab\") and then a token-protected HTTP API on 127.0.0.1. The helper is open source in the same repository (helper/, Go) and is downloaded from https://github.com/wobkobi/VidGrab/releases/latest.\n\nTo test: download the helper for your system from that page and run it once (Windows: double-click vidgrab-windows-amd64.exe; macOS/Linux: chmod +x and run it with \"install\"). It registers the native host for this add-on id and downloads yt-dlp and ffmpeg on first use. Restart Firefox, open any YouTube video, and use the Download button beside the like/dislike buttons. Progress shows on the button and in the toolbar popup.\n\nWithout the helper the add-on only shows \"VidGrab helper not installed\" with a link to the download page. The add-on collects no data; it only talks to the local helper. No code is minified or generated."
   }
 }
