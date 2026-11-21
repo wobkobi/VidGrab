@@ -23,7 +23,19 @@ const TYPE_LABEL = {
  * Areas of the add-on in the order release notes list them. Areas not listed here follow in the
  * order they first appear, and bullets without one go under General, last.
  */
-const AREA_ORDER = ["Download button", "Three-dot menu", "Popup", "Notifications", "Settings", "Helper", "Installing"];
+const AREA_ORDER = [
+  "Download button",
+  "Three-dot menu",
+  "Playlists and channels",
+  "Clips",
+  "Size limit",
+  "Popup",
+  "Notifications",
+  "Files",
+  "Settings",
+  "Helper",
+  "Installing",
+];
 
 /**
  * Compare two dotted versions by number.
