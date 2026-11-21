@@ -172,18 +172,20 @@ test("parseMaxSize accepts whole MB within the limits only", () => {
 test("maxSizeChoice maps sizes onto presets, off or custom", () => {
   assert.equal(constants.maxSizeChoice(0), "0");
   assert.equal(constants.maxSizeChoice(undefined), "0");
-  assert.equal(constants.maxSizeChoice(10), "10");
-  assert.equal(constants.maxSizeChoice(18), "18");
+  assert.equal(constants.maxSizeChoice(20), "20");
   assert.equal(constants.maxSizeChoice(50), "50");
+  assert.equal(constants.maxSizeChoice(100), "100");
   assert.equal(constants.maxSizeChoice(500), "500");
-  assert.equal(constants.maxSizeChoice(25), constants.MAX_SIZE_CUSTOM);
-  // A size saved from an older preset list keeps working as a custom size
-  assert.equal(constants.maxSizeChoice(20), constants.MAX_SIZE_CUSTOM);
+  assert.equal(constants.maxSizeChoice(25), "25");
+  assert.equal(constants.maxSizeChoice(10), "10");
+  assert.equal(constants.maxSizeChoice(250), "250");
+  assert.equal(constants.maxSizeChoice(1000), "1000");
+  assert.equal(constants.maxSizeChoice(64), constants.MAX_SIZE_CUSTOM);
 });
 
 test("maxSizeValue resolves the choice and custom field", () => {
   assert.equal(constants.maxSizeValue("0", "99"), 0);
-  assert.equal(constants.maxSizeValue("10", ""), 10);
+  assert.equal(constants.maxSizeValue("20", ""), 20);
   assert.equal(constants.maxSizeValue("500", "7"), 500);
   assert.equal(constants.maxSizeValue(constants.MAX_SIZE_CUSTOM, "25"), 25);
   assert.equal(constants.maxSizeValue(constants.MAX_SIZE_CUSTOM, ""), null);

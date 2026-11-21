@@ -13,16 +13,13 @@ All notable changes to this project are documented here. The format follows
   links to the download page.
 - **Popup:** Clicking a job's title goes back to its video, switching to the tab it is open in
   or opening a new one.
-- **Size limit:** Presets for WhatsApp (16 MB) and email (18 MB, which fits a 25 MB attachment
-  limit).
+- **Size limit:** 10 MB, 25 MB, 100 MB, 250 MB and 1 GB presets.
 - **Settings:** Advanced lists other page selectors to add to or remove from each field when YouTube
   moves its buttons.
 
 ### Changed
 
 - **Popup:** Open and Show in folder sit beside a finished job's bar instead of on their own line.
-- **Size limit:** The Discord preset is 10 MB, Discord's free limit, instead of 20 MB. A saved 20 MB
-  default keeps working as a custom size.
 - **Settings:** A new look: a header with the version and links to the guide, changelog, helper
   download and problem reports, the sections stacked in one panel with Save below, Advanced folded
   away until opened, and notes and warnings in tinted boxes.

@@ -77,17 +77,23 @@ YTDL.constants = (function () {
     {value: "128", label: "128 kbps"},
   ];
 
-  // Max size presets for common upload limits. Email is 18 MB because attachments grow by about a
-  // third when encoded, so a 25 MB limit (Gmail) holds about 18 MB of file. A saved size that is
-  // no longer a preset shows as Custom. "custom" takes a typed MB value.
+  // Max size presets, a ladder of common upload limits: 10 MB free GitHub and many forums, 20 MB
+  // Discord's free limit (since August 2026), 25 MB Gmail and Outlook, 50 MB Discord Nitro Basic,
+  // 100 MB WhatsApp HD, Signal and Messenger, 250 MB Streamable and Bluesky (300 MB), 500 MB Discord
+  // Nitro and X (512 MB), 1 GB Slack and Reddit. Only Discord is named, since the others cover
+  // several apps each. A saved size that is not a preset shows as Custom. "custom" takes a typed MB
+  // value.
   const MAX_SIZE_CUSTOM = "custom";
   const MAX_SIZES = [
     {value: "0", label: "Off"},
-    {value: "10", label: "10 MB (Discord)"},
-    {value: "16", label: "16 MB (WhatsApp)"},
-    {value: "18", label: "18 MB (Email)"},
-    {value: "50", label: "50 MB (Discord Nitro Basic)"},
-    {value: "500", label: "500 MB (Discord Nitro)"},
+    {value: "10", label: "10 MB"},
+    {value: "20", label: "20 MB (Discord)"},
+    {value: "25", label: "25 MB"},
+    {value: "50", label: "50 MB"},
+    {value: "100", label: "100 MB"},
+    {value: "250", label: "250 MB"},
+    {value: "500", label: "500 MB"},
+    {value: "1000", label: "1 GB"},
     {value: MAX_SIZE_CUSTOM, label: "Custom"},
   ];
 
