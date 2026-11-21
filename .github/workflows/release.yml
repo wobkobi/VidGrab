@@ -60,7 +60,7 @@ jobs:
           node-version: 24
 
       - if: steps.version.outputs.new == 'true'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: helper/go.mod
           cache-dependency-path: helper/go.sum
