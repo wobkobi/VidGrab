@@ -1,13 +1,12 @@
 {
   "manifest_version": 2,
   "name": "VidGrab",
-  "version": "2.4.2",
+  "version": "2.5.0",
   "description": "Download YouTube videos, Shorts, playlists and channels as video or MP3 through a local yt-dlp backend.",
   "browser_specific_settings": {
     "gecko": {
       "id": "yt-dl-firefox@local",
       "strict_min_version": "140.0",
-      "update_url": "https://github.com/wobkobi/yt-dl-firefox/releases/latest/download/updates.json",
       "data_collection_permissions": {
         "required": ["none"]
       }

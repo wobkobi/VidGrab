@@ -116,7 +116,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       if (flash) return { text: flash, tone: "error", progress: null, action: "download", title: flash };
       if (content.backendDown() && !(job && ACTIVE.has(job.status))) {
         if (content.helperMissing()) {
-          return { text: "Helper not installed", tone: "offline", progress: null, action: "download", title: content.helperMissingText(content.backend) };
+          const title = `${content.helperMissingText(content.backend)} Click to open the download page.`;
+          return { text: "Helper not installed", tone: "offline", progress: null, action: "get-helper", title };
         }
         const title = (content.backend && content.backend.error) || "Click to start the backend and download";
         return { text: "Backend not running", tone: "offline", progress: null, action: "download", title };
@@ -244,6 +245,10 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
      */
     async function onMainClick() {
       if (!videoId || busyText) return;
+      if (currentAction === "get-helper") {
+        if (YTDL.constants.HELPER_URL) window.open(YTDL.constants.HELPER_URL, "_blank", "noopener");
+        return;
+      }
       const job = content.latestJobFor(videoId);
       if (currentAction === "retry" && job) {
         await withBusy("Retrying...", () => content.send({ type: "jobAction", id: job.id, action: "retry" }));

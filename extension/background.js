@@ -597,7 +597,19 @@ browser.notifications.onClicked.addListener((notificationId) => {
 
 browser.browserAction.setBadgeBackgroundColor({color: "#cc0000"});
 
-loadSettings()
+const startup = loadSettings()
   .then(() => ensureBackend())
-  .catch((err) => console.warn("[yt-dl] Startup failed:", err))
+  .catch((err) => {
+    console.warn("[yt-dl] Startup failed:", err);
+    return null;
+  })
   .finally(() => schedulePoll(0));
+
+// A fresh install with no helper opens the download page, since the add-on can do nothing
+// without it. Updates and restarts don't, so a removed helper never reopens it.
+browser.runtime.onInstalled.addListener(({reason}) => {
+  if (reason !== "install" || !constants.HELPER_URL) return;
+  startup.then((backend) => {
+    if (backend && backend.code === constants.HELPER_MISSING) browser.tabs.create({url: constants.HELPER_URL});
+  });
+});
