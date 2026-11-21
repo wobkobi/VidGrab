@@ -83,7 +83,7 @@ jobs:
             echo "::error::The WEB_EXT_API_KEY or WEB_EXT_API_SECRET secret is missing, so the add-on can't be signed."
             exit 1
           fi
-          npx --yes web-ext@8.3.0 sign -s extension --channel unlisted \
+          npx --yes web-ext@10.8.0 sign -s extension --channel unlisted \
             --artifacts-dir "$RUNNER_TEMP/signed"
           mkdir -p release
           mv "$RUNNER_TEMP"/signed/*.xpi "release/vidgrab-$VERSION.xpi"
