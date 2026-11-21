@@ -151,7 +151,12 @@ async function runAction(id, action, button) {
  */
 function createRow(id) {
   const row = {el: el("div", "job"), status: null};
-  row.title = el("span", "job-title");
+  // A link only for its keyboard focus and hover cue: a click goes through showVideo
+  row.title = el("a", "job-title");
+  row.title.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (row.url) showVideo(row.url);
+  });
   row.channel = el("div", "job-channel muted small");
   row.tag = el("span", "tag");
   const head = el("div", "job-head");
@@ -169,6 +174,27 @@ function createRow(id) {
 }
 
 /**
+ * Bring up a job's video: switch to a tab already on it (in any window), or open it in a new tab.
+ * @param {string} url - The job's video link.
+ */
+async function showVideo(url) {
+  try {
+    const id = format.videoId(url);
+    const tabs = id ? await browser.tabs.query({url: "*://*.youtube.com/*"}) : [];
+    const tab = tabs.find((t) => format.videoId(t.url) === id);
+    if (tab) {
+      await browser.tabs.update(tab.id, {active: true});
+      await browser.windows.update(tab.windowId, {focused: true});
+    } else {
+      await browser.tabs.create({url});
+    }
+    window.close();
+  } catch (err) {
+    showMessage(`Couldn't open the video: ${(err && err.message) || err}`);
+  }
+}
+
+/**
  * Update a job row in place; action buttons are rebuilt only when the status changes.
  * @param {object} row - Row record from {@link createRow}.
  * @param {object} job - Job from the backend.
@@ -177,7 +203,14 @@ function updateRow(row, job) {
   const title = job.title || job.filename || job.url;
   const channel = typeof job.channel === "string" ? job.channel.trim() : "";
   row.title.textContent = title;
-  row.title.title = title;
+  row.url = /^https?:\/\//.test(job.url || "") ? job.url : "";
+  if (row.url) {
+    row.title.href = row.url;
+    row.title.title = `${title}\nGo to the video`;
+  } else {
+    row.title.removeAttribute("href");
+    row.title.title = title;
+  }
   row.channel.textContent = channel;
   row.channel.title = channel;
   row.tag.textContent = formatTag(job.options);
@@ -358,15 +391,22 @@ function renderBackend(backend) {
     els.update.hidden = true;
     return;
   }
+  els.update.hidden = !health.update_available && !busy.update;
+  els.update.disabled = busy.update;
+  els.update.textContent = busy.update ? "Updating..." : "Update";
+  els.update.title = health.yt_dlp_latest ? `Update yt-dlp to ${health.yt_dlp_latest}` : "Update yt-dlp";
+  // Downloads still work with an old helper, so this warns rather than blocks
+  if (constants.helperOutdated(health.version)) {
+    els.dot.className = "dot busy";
+    els.title.textContent = `Helper out of date (v${health.version})`;
+    renderHelperLink(`Download helper ${constants.MIN_HELPER_VERSION} or newer and run it once`);
+    return;
+  }
   els.title.textContent = `Backend running (v${health.version})`;
   const parts = [`yt-dlp ${health.yt_dlp_version}`];
   parts.push(health.ffmpeg ? "ffmpeg found" : "ffmpeg missing: MP3, above 720p and max size unavailable");
   els.meta.textContent = parts.join(" · ");
   els.meta.title = els.meta.textContent;
-  els.update.hidden = !health.update_available && !busy.update;
-  els.update.disabled = busy.update;
-  els.update.textContent = busy.update ? "Updating..." : "Update";
-  els.update.title = health.yt_dlp_latest ? `Update yt-dlp to ${health.yt_dlp_latest}` : "Update yt-dlp";
 }
 
 /**

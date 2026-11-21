@@ -61,15 +61,13 @@ function populateSelects() {
 }
 
 /**
- * Dim the fields that do not apply to the chosen default type and warn when the chosen
- * default needs ffmpeg but the backend reported none.
+ * Disable the fields the other choices make meaningless (bitrate for M4A, container under a max
+ * size) and warn when the chosen default needs ffmpeg but the backend reported none. Video and
+ * audio fields stay editable whatever the type, since the panel starts from all of them.
  */
 function updateDependentFields() {
   const kind = field("kind").value;
-  for (const label of form.querySelectorAll("label[data-for]")) {
-    label.classList.toggle("dimmed", label.dataset.for !== kind);
-  }
-  field("audio_bitrate").disabled = kind !== "audio" || field("audio_format").value !== "mp3";
+  field("audio_bitrate").disabled = field("audio_format").value !== "mp3";
 
   // A max size always saves MP4: show it in the disabled container select and put the
   // earlier choice back when the size is turned off
@@ -264,4 +262,5 @@ document.getElementById("reset-selectors").addEventListener("click", () => {
 testButton.addEventListener("click", testBackend);
 
 populateSelects();
+document.getElementById("version").textContent = `v${browser.runtime.getManifest().version}`;
 load().then(testBackend);

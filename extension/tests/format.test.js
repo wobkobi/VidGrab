@@ -4,6 +4,18 @@ const assert = require("node:assert/strict");
 require("../shared/constants.js");
 const format = require("../shared/format.js");
 
+test("videoId reads watch, Shorts, live and youtu.be links only", () => {
+  assert.equal(format.videoId("https://www.youtube.com/watch?v=abc123&t=42s&list=PL1"), "abc123");
+  assert.equal(format.videoId("https://m.youtube.com/watch?v=abc123"), "abc123");
+  assert.equal(format.videoId("https://music.youtube.com/watch?v=abc123"), "abc123");
+  assert.equal(format.videoId("https://www.youtube.com/shorts/abc123?feature=share"), "abc123");
+  assert.equal(format.videoId("https://www.youtube.com/live/abc123"), "abc123");
+  assert.equal(format.videoId("https://youtu.be/abc123?t=5"), "abc123");
+  for (const url of ["https://www.youtube.com/playlist?list=PL1", "https://www.youtube.com/@chan", "https://example.com/watch?v=abc123", "https://www.youtube.com/watch", "not a url", null]) {
+    assert.equal(format.videoId(url), null);
+  }
+});
+
 test("bytes formats binary units and rejects missing values", () => {
   assert.equal(format.bytes(0), "0 B");
   assert.equal(format.bytes(512), "512 B");

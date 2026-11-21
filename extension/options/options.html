@@ -7,33 +7,49 @@
   </head>
   <body>
     <main class="page">
-      <h1>VidGrab settings</h1>
+      <header class="topbar">
+        <div class="topbar-main">
+          <h1><img src="../icons/icon.svg" alt="" width="26" height="26" />VidGrab for YouTube</h1>
+          <span class="version" id="version"></span>
+        </div>
+        <nav class="topnav">
+          <a href="https://github.com/wobkobi/VidGrab#usage" target="_blank" rel="noopener noreferrer">Guide</a>
+          <a href="https://github.com/wobkobi/VidGrab/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
+          <a href="https://github.com/wobkobi/VidGrab/releases/latest" target="_blank" rel="noopener noreferrer">Download helper</a>
+          <a href="https://github.com/wobkobi/VidGrab/issues/new/choose" target="_blank" rel="noopener noreferrer">Report a problem</a>
+          <a href="https://github.com/wobkobi/VidGrab" target="_blank" rel="noopener noreferrer">Source code</a>
+        </nav>
+      </header>
 
       <form id="form" novalidate>
         <section class="card">
-          <h2>Default download</h2>
-          <p class="hint">Used by the main Download button. The panel arrow lets you pick per download.</p>
+          <h2><span class="icon" aria-hidden="true">⬇️</span>Default download</h2>
+          <p class="hint">
+            The main Download button uses these. The panel arrow starts from them too, so the audio
+            choices apply when you switch it to Audio.
+          </p>
           <div class="grid">
             <label>Type <select id="kind" name="kind"></select></label>
-            <label data-for="video">Quality <select id="quality" name="quality"></select></label>
-            <label data-for="video">Codec <select id="codec" name="codec"></select></label>
-            <label data-for="video">Container <select id="container" name="container"></select></label>
-            <label data-for="video">Max size <select id="max_size" name="max_size"></select></label>
-            <label data-for="video" id="max-size-custom" hidden
+            <label>Quality <select id="quality" name="quality"></select></label>
+            <label>Codec <select id="codec" name="codec"></select></label>
+            <label>Container <select id="container" name="container"></select></label>
+            <label>Max size <select id="max_size" name="max_size"></select></label>
+            <label id="max-size-custom" hidden
               >Custom size (MB)
               <input type="number" id="max_size_custom" name="max_size_custom" min="1" max="4000" step="1" placeholder="1-4000" />
             </label>
-            <label data-for="audio">Audio format <select id="audio_format" name="audio_format"></select></label>
-            <label data-for="audio">MP3 bitrate <select id="audio_bitrate" name="audio_bitrate"></select></label>
+            <label>Audio format <select id="audio_format" name="audio_format"></select></label>
+            <label>MP3 bitrate <select id="audio_bitrate" name="audio_bitrate"></select></label>
           </div>
-          <p class="hint" id="size-hint" hidden>
-            Max size is for Discord uploads and always saves MP4. Converts to fit when no stream is small enough (slower, lower quality).
+          <p class="hint callout info" id="size-hint" hidden>
+            Max size fits a video under an upload limit, such as Discord's or WhatsApp's, and always saves MP4. Converts to
+            fit when no stream is small enough (slower, lower quality).
           </p>
-          <p class="hint" id="ffmpeg-hint" hidden></p>
+          <p class="hint callout warn" id="ffmpeg-hint" hidden></p>
         </section>
 
         <section class="card">
-          <h2>Downloads</h2>
+          <h2><span class="icon" aria-hidden="true">⚙️</span>Downloads</h2>
           <div class="grid">
             <label
               >Parallel downloads
@@ -66,8 +82,8 @@
           </label>
         </section>
 
-        <section class="card">
-          <h2>Advanced: page selectors</h2>
+        <details class="card collapsible">
+          <summary><h2><span class="icon" aria-hidden="true">🧩</span>Advanced: page selectors</h2></summary>
           <p class="hint">Change these only if YouTube moves its buttons and the Download button disappears.</p>
           <div class="grid wide">
             <label>Watch page button container <input type="text" id="watchContainer" name="watchContainer" spellcheck="false" /></label>
@@ -78,6 +94,65 @@
             <label>Shorts action bar <input type="text" id="shortsBar" name="shortsBar" spellcheck="false" /></label>
           </div>
           <button type="button" class="btn" id="reset-selectors">Reset selectors</button>
+          <div class="guide">
+            <p class="guide-lead">
+              Each field takes one selector, or several separated by commas. Copy any of these into a field or remove one,
+              then click Save. Open YouTube tabs update straight away.
+            </p>
+
+            <h3>Watch page button container</h3>
+            <dl>
+              <dt><code>#top-level-buttons-computed</code> <span class="badge">default</span></dt>
+              <dd>The row with Like, Share and the other buttons under the video.</dd>
+              <dt><code>ytd-watch-metadata #actions #top-level-buttons-computed</code></dt>
+              <dd>The same row, only inside the video's title and channel block, so look-alikes elsewhere on the page are skipped.</dd>
+              <dt><code>ytd-menu-renderer #top-level-buttons-computed</code></dt>
+              <dd>The same row, found through the menu that holds it and the three-dot button.</dd>
+              <dt><code>#actions-inner #menu</code></dt>
+              <dd>That whole menu, three-dot button included. For when the row itself has moved.</dd>
+              <dt><code>ytd-watch-metadata #actions</code></dt>
+              <dd>The whole strip of actions beside the channel name. The widest choice, so the button may land at its far end.</dd>
+            </dl>
+
+            <h3>Shorts action bar</h3>
+            <dl>
+              <dt><code>#actions.ytd-reel-player-overlay-renderer</code> <span class="badge">default</span></dt>
+              <dd>The column of buttons beside a Short: Like, Dislike, Comments and Share.</dd>
+              <dt><code>ytd-reel-player-overlay-renderer #actions</code> <span class="badge">default</span></dt>
+              <dd>The same column, found from the Short's overlay.</dd>
+              <dt><code>reel-action-bar-view-model</code></dt>
+              <dd>The action bar in YouTube's newer Shorts layout.</dd>
+              <dt><code>#button-bar</code></dt>
+              <dd>A button bar some Shorts layouts use. The broadest choice, so try it last.</dd>
+            </dl>
+
+            <h3>Combining selectors</h3>
+            <p>
+              With a comma list the button goes in whichever match comes <strong>first on the page</strong>, top to
+              bottom, not in the order you typed them. So list alternatives for the same spot, where only one is likely to
+              exist at a time.
+            </p>
+            <p>For example, the Shorts default names the same column two ways, so it still works if YouTube changes one:</p>
+            <pre><code>#actions.ytd-reel-player-overlay-renderer, ytd-reel-player-overlay-renderer #actions</code></pre>
+            <p>Adding the newer bar on the end covers both Shorts layouts, since a Short has one or the other:</p>
+            <pre><code>#actions.ytd-reel-player-overlay-renderer, ytd-reel-player-overlay-renderer #actions, reel-action-bar-view-model</code></pre>
+            <p class="guide-warn">
+              <strong>Don't</strong> list a box together with something inside it, such as <code>#actions-inner #menu</code> with
+              <code>#top-level-buttons-computed</code>. The outer box always comes first, so it always wins.
+            </p>
+            <p>
+              Reset selectors puts the defaults back. When nothing you entered matches, the add-on still tries the lists
+              above by itself.
+            </p>
+          </div>
+        </details>
+
+        <section class="card">
+          <h2><span class="icon" aria-hidden="true">🔌</span>Backend</h2>
+          <div class="bar">
+            <button type="button" class="btn" id="test">Test backend</button>
+            <span class="status" id="test-status" role="status"></span>
+          </div>
         </section>
 
         <div class="bar">
@@ -86,14 +161,6 @@
           <span class="status" id="save-status" role="status"></span>
         </div>
       </form>
-
-      <section class="card">
-        <h2>Backend</h2>
-        <div class="bar">
-          <button type="button" class="btn" id="test">Test backend</button>
-          <span class="status" id="test-status" role="status"></span>
-        </div>
-      </section>
     </main>
 
     <script src="../shared/constants.js"></script>
