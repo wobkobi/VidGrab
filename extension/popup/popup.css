@@ -226,6 +226,16 @@ body {
   white-space: nowrap;
 }
 
+a.job-title {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.job-title[href]:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .job-channel {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -303,6 +313,28 @@ body {
 .actions .btn {
   padding: 1px 7px;
   font-size: 11.5px;
+}
+
+/* A finished job has no meta text, so Open and Show in folder sit beside the bar, which shrinks
+   to fit them. The head and channel still span the full width. */
+.job[data-status="complete"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: center;
+}
+
+.job[data-status="complete"] > .job-head,
+.job[data-status="complete"] > .job-channel {
+  grid-column: 1 / -1;
+}
+
+.job[data-status="complete"] > .bar {
+  margin: 5px 0;
+}
+
+.job[data-status="complete"] .job-meta {
+  display: none;
 }
 
 .footer {

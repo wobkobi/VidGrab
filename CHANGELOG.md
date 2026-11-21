@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
+## [2.7.0] - 2026-11-22
+
+### Added
+
+- **Popup:** When the helper is older than this version of the add-on needs, the popup says so and
+  links to the download page.
+- **Popup:** Clicking a job's title goes back to its video, switching to the tab it is open in
+  or opening a new one.
+- **Size limit:** 10 MB, 25 MB, 100 MB, 250 MB and 1 GB presets.
+- **Settings:** Advanced lists other page selectors to add to or remove from each field when YouTube
+  moves its buttons.
+
+### Changed
+
+- **Popup:** Open and Show in folder sit beside a finished job's bar instead of on their own line.
+- **Settings:** A new look: a header with the version and links to the guide, changelog, helper
+  download and problem reports, the sections stacked in one panel with Save below, Advanced folded
+  away until opened, and notes and warnings in tinted boxes.
+- **Settings:** Video and audio defaults no longer look greyed out when they don't match the default
+  type; the panel starts from all of them. MP3 bitrate is only greyed out for M4A.
+
 ## [2.6.1] - 2026-11-22
 
 ### Changed

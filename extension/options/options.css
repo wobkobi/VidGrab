@@ -1,5 +1,6 @@
 :root {
   --bg: #f9f9fb;
+  --outside: #ececf1;
   --surface: #ffffff;
   --border: #e0e0e6;
   --text: #18181b;
@@ -8,20 +9,25 @@
   --accent-text: #ffffff;
   --ok: #1f7a45;
   --bad: #c42020;
+  --warn: #9a5b00;
+  --info: #1d5fbf;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1c1b22;
+    --outside: #16151b;
     --surface: #2b2a33;
-    --border: #3f3e4a;
+    --border: #55545f;
     --text: #fbfbfe;
     --muted: #a8a7b0;
     --accent: #ff5a5a;
     --accent-text: #1c1b22;
     --ok: #4fd18b;
     --bad: #ff6b6b;
+    --warn: #f0b34a;
+    --info: #8ab4ff;
     color-scheme: dark;
   }
 }
@@ -32,33 +38,141 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--outside);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 14.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 .page {
   max-width: 760px;
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 0 0 32px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+/* The header runs edge to edge across the column; everything under it is inset */
+.page > :not(.topbar) {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+/* Header: a charcoal box with the title and version, and the links on a slightly lighter
+   strip underneath. Both themes use the same charcoal, so its colours are fixed rather than theme
+   tokens. */
+.topbar {
+  margin: 16px 16px 20px;
+  color: #ffffff;
+  background: #24232b;
+  border: 1px solid #3a3942;
+  overflow: hidden;
+}
+
+.topbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
 }
 
 h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
   font-size: 22px;
-  margin: 0 0 16px;
+}
+
+.version {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c9c8d1;
+}
+
+.topnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  padding: 7px 16px;
+  font-size: 13.5px;
+  background: #2d2c35;
+  border-top: 1px solid #3a3942;
+}
+
+.topnav a {
+  color: #d4d3dc;
+  text-decoration: none;
+}
+
+.topnav a:hover,
+.topnav a:focus-visible {
+  color: #ffffff;
+  text-decoration: underline;
 }
 
 h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
   font-size: 15px;
-  margin: 0 0 4px;
 }
 
+h2 .icon {
+  font-size: 13px;
+}
+
+/* The cards stack into one panel: no space between them and a shared border line */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 16px;
+  padding: 14px 16px;
+}
+
+.card + .card {
+  border-top: 0;
+}
+
+/* A card that opens from its heading (Advanced), with a chevron that turns when open */
+.collapsible > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.collapsible[open] > summary::after {
+  transform: rotate(225deg);
+}
+
+.collapsible > summary h2 {
+  margin: 0;
+}
+
+.collapsible[open] > summary {
+  margin-bottom: 6px;
+}
+
+.collapsible > summary:hover h2 {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* .hint and .grid label set display, which would otherwise override the hidden attribute */
@@ -66,19 +180,127 @@ h2 {
   display: none !important;
 }
 
+/* Selector guide under Advanced: a light panel with a heading per field and each selector in a
+   code box above its description */
+.guide {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.guide p {
+  margin: 0 0 8px;
+}
+
+.guide .guide-lead {
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.guide h3 {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+  line-height: 1.3;
+}
+
+.guide h3:first-of-type {
+  margin-top: 0;
+}
+
+.guide dl {
+  margin: 0;
+}
+
+.guide dt {
+  margin-top: 10px;
+}
+
+.guide dt:first-child {
+  margin-top: 0;
+}
+
+.guide dd {
+  margin: 3px 0 0;
+  color: var(--muted);
+}
+
+.guide code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 1px 6px;
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--info) 25%, var(--border));
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.guide pre {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+}
+
+.guide pre code {
+  display: block;
+  padding: 6px 8px;
+}
+
+.guide .guide-warn {
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.guide .guide-warn strong {
+  color: var(--warn);
+}
+
+.guide .badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+  padding: 0 6px;
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+
 .hint {
   display: block;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
   margin: 0 0 10px;
   font-weight: 400;
+}
+
+/* Info and warning notes, tinted in their colour with a bar down the left */
+.callout {
+  margin: 4px 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid;
+  color: var(--text);
+}
+
+.callout.info {
+  border-color: var(--info);
+  background: color-mix(in srgb, var(--info) 9%, transparent);
+}
+
+.callout.warn {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 11%, transparent);
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px 16px;
-  margin: 10px 0 12px;
+  margin: 8px 0 12px;
 }
 
 .grid.wide {
@@ -96,10 +318,6 @@ h2 {
   margin: 0;
 }
 
-.grid label.dimmed {
-  opacity: 0.55;
-}
-
 select,
 input[type="number"],
 input[type="text"] {
@@ -107,14 +325,25 @@ input[type="text"] {
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
   padding: 6px 8px;
   width: 100%;
 }
 
 input[type="text"] {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 13px;
+  font-size: 13.5px;
+}
+
+select:hover:not(:disabled),
+input[type="number"]:hover,
+input[type="text"]:hover {
+  border-color: color-mix(in srgb, var(--muted) 50%, var(--border));
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
 }
 
 input:invalid {
@@ -125,7 +354,7 @@ input:invalid {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  margin: 10px 0;
+  margin: 9px 0;
 }
 
 .check input {
@@ -141,8 +370,7 @@ input:invalid {
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 14px;
+  padding: 5px 14px;
   cursor: pointer;
 }
 
@@ -153,6 +381,10 @@ input:invalid {
 .btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text));
 }
 
 .btn.primary {
@@ -174,7 +406,7 @@ input:focus-visible {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-bottom: 16px;
+  margin: 16px 0 0;
 }
 
 .card .bar {
@@ -182,7 +414,7 @@ input:focus-visible {
 }
 
 .status {
-  font-size: 13px;
+  font-size: 13.5px;
   overflow-wrap: anywhere;
 }
 

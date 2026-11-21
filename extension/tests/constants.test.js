@@ -150,6 +150,16 @@ test("max size options have unique values and a custom choice", () => {
   for (const item of constants.MAX_SIZES) assert.ok(item.label);
 });
 
+test("helperOutdated flags helpers older than MIN_HELPER_VERSION only", () => {
+  assert.equal(constants.helperOutdated("2.3.0"), true);
+  assert.equal(constants.helperOutdated("2.5.9"), true);
+  assert.equal(constants.helperOutdated(constants.MIN_HELPER_VERSION), false);
+  assert.equal(constants.helperOutdated("2.6.1"), false);
+  assert.equal(constants.helperOutdated("2.10.0"), false);
+  assert.equal(constants.helperOutdated("3.0"), false);
+  for (const version of ["dev", "", null, undefined, 2]) assert.equal(constants.helperOutdated(version), false);
+});
+
 test("parseMaxSize accepts whole MB within the limits only", () => {
   assert.equal(constants.parseMaxSize("25"), 25);
   assert.equal(constants.parseMaxSize(" 4000 "), 4000);
@@ -164,8 +174,13 @@ test("maxSizeChoice maps sizes onto presets, off or custom", () => {
   assert.equal(constants.maxSizeChoice(undefined), "0");
   assert.equal(constants.maxSizeChoice(20), "20");
   assert.equal(constants.maxSizeChoice(50), "50");
+  assert.equal(constants.maxSizeChoice(100), "100");
   assert.equal(constants.maxSizeChoice(500), "500");
-  assert.equal(constants.maxSizeChoice(25), constants.MAX_SIZE_CUSTOM);
+  assert.equal(constants.maxSizeChoice(25), "25");
+  assert.equal(constants.maxSizeChoice(10), "10");
+  assert.equal(constants.maxSizeChoice(250), "250");
+  assert.equal(constants.maxSizeChoice(1000), "1000");
+  assert.equal(constants.maxSizeChoice(64), constants.MAX_SIZE_CUSTOM);
 });
 
 test("maxSizeValue resolves the choice and custom field", () => {

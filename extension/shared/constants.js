@@ -77,13 +77,23 @@ YTDL.constants = (function () {
     {value: "128", label: "128 kbps"},
   ];
 
-  // Max size presets match Discord's upload limits; "custom" takes a typed MB value
+  // Max size presets, a ladder of common upload limits: 10 MB free GitHub and many forums, 20 MB
+  // Discord's free limit (since August 2026), 25 MB Gmail and Outlook, 50 MB Discord Nitro Basic,
+  // 100 MB WhatsApp HD, Signal and Messenger, 250 MB Streamable and Bluesky (300 MB), 500 MB Discord
+  // Nitro and X (512 MB), 1 GB Slack and Reddit. Only Discord is named, since the others cover
+  // several apps each. A saved size that is not a preset shows as Custom. "custom" takes a typed MB
+  // value.
   const MAX_SIZE_CUSTOM = "custom";
   const MAX_SIZES = [
     {value: "0", label: "Off"},
+    {value: "10", label: "10 MB"},
     {value: "20", label: "20 MB (Discord)"},
-    {value: "50", label: "50 MB (Nitro Basic)"},
-    {value: "500", label: "500 MB (Nitro)"},
+    {value: "25", label: "25 MB"},
+    {value: "50", label: "50 MB"},
+    {value: "100", label: "100 MB"},
+    {value: "250", label: "250 MB"},
+    {value: "500", label: "500 MB"},
+    {value: "1000", label: "1 GB"},
     {value: MAX_SIZE_CUSTOM, label: "Custom"},
   ];
 
@@ -114,6 +124,28 @@ YTDL.constants = (function () {
   const HELPER_MISSING = "helper_missing";
   const HELPER_MISSING_ERROR = "VidGrab helper not installed";
   const HELPER_MISSING_DETAIL = "Download the VidGrab helper and run it once";
+
+  // Oldest helper this add-on fully works with (2.6.0 added the channel name on each job). Raise
+  // it when the add-on starts relying on something a newer helper adds. It isn't the add-on's own
+  // version: every release rebuilds the helper, so that would ask for a reinstall on every
+  // add-on-only patch.
+  const MIN_HELPER_VERSION = "2.6.0";
+
+  /**
+   * Report whether a running helper is older than {@link MIN_HELPER_VERSION}. A version that isn't
+   * dotted numbers, such as "dev" from a local go build, counts as current.
+   * @param {unknown} version - The helper's version from /health.
+   * @returns {boolean} True when the helper should be updated.
+   */
+  function helperOutdated(version) {
+    if (typeof version !== "string" || !/^\d+(\.\d+)*$/.test(version)) return false;
+    const have = version.split(".").map(Number);
+    const need = MIN_HELPER_VERSION.split(".").map(Number);
+    for (let i = 0; i < Math.max(have.length, need.length); i++) {
+      if ((have[i] ?? 0) !== (need[i] ?? 0)) return (have[i] ?? 0) < (need[i] ?? 0);
+    }
+    return false;
+  }
 
   /**
    * Classify a sendNativeMessage rejection. Firefox rejects with "No such native
@@ -295,6 +327,8 @@ YTDL.constants = (function () {
     HELPER_MISSING,
     HELPER_MISSING_ERROR,
     HELPER_MISSING_DETAIL,
+    MIN_HELPER_VERSION,
+    helperOutdated,
     NEEDS_FFMPEG,
     parseMaxSize,
     maxSizeChoice,

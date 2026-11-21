@@ -178,7 +178,28 @@ YTDL.format = (function () {
     return {state: "installing", text: Number.isFinite(pct) ? `${label}... ${percent(pct)}` : `${label}...`};
   }
 
-  return {bytes, eta, percent, parseRange, parseTime, clock, statusLabel, isConverting, isPreparing, convertingLabel, convertingMeta, setupStatus};
+  /**
+   * The YouTube video id in a watch, Shorts, live or youtu.be link, so a job's link can be
+   * matched to a tab open on the same video whatever its other parameters (time, playlist).
+   * @param {unknown} url - Link to read.
+   * @returns {string|null} The video id, or null for anything else (a playlist, a channel, not YouTube).
+   */
+  function videoId(url) {
+    let parsed;
+    try {
+      parsed = new URL(String(url));
+    } catch {
+      return null;
+    }
+    const host = parsed.hostname.replace(/^(www|m|music)\./, "");
+    if (host === "youtu.be") return parsed.pathname.split("/")[1] || null;
+    if (host !== "youtube.com") return null;
+    if (parsed.pathname === "/watch") return parsed.searchParams.get("v") || null;
+    const match = /^\/(?:shorts|live)\/([^/]+)/.exec(parsed.pathname);
+    return match ? match[1] : null;
+  }
+
+  return {bytes, eta, percent, parseRange, parseTime, clock, statusLabel, isConverting, isPreparing, convertingLabel, convertingMeta, setupStatus, videoId};
 })();
 
 if (typeof module !== "undefined") module.exports = YTDL.format;
