@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
+## [2.7.1] - 2026-11-22
+
+### Changed
+
+- **Helper:** The Windows helper carries VidGrab's icon and version details, so Windows and antivirus
+  software see a named, versioned program instead of a bare one.
+
 ## [2.7.0] - 2026-11-22
 
 ### Added

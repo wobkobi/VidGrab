@@ -85,6 +85,16 @@ jobs:
           node scripts/release-notes.mjs "$VERSION" ${since:+--since "$since"} --out "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
+      # Built before the AMO submission, which can't be taken back, so a failed build stops the
+      # release first. windres embeds the Windows helper's icon and version details.
+      - name: Build the helpers
+        if: steps.version.outputs.new == 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64
+          node scripts/build-helper.mjs
+          mkdir -p release
+          cp dist/vidgrab-* release/
+
       # --approval-timeout 0 returns once AMO has the version, without waiting for the review,
       # which can take days. Firefox picks the version up from AMO after it is approved. AMO
       # needs a licence on every listed version and categories on the add-on, which
@@ -106,13 +116,6 @@ jobs:
       - name: Build the add-on (dry run)
         if: steps.version.outputs.new == 'true' && inputs.dry_run
         run: npx --yes web-ext@10.8.0 build -s extension --artifacts-dir "$RUNNER_TEMP/built"
-
-      - name: Build the helpers
-        if: steps.version.outputs.new == 'true'
-        run: |
-          node scripts/build-helper.mjs
-          mkdir -p release
-          cp dist/vidgrab-* release/
 
       # Installs from 2.4.x carry an update_url pointing at updates.json on the latest release.
       # This one sends them to AMO's copy, which has no update_url, so from then on they update
