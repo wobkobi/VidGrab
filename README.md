@@ -269,7 +269,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as the [dev build](https://github.com/wobkobi/VidGrab/releases/tag/dev-build) prerelease (`.github/workflows/dev-build.yml`), versioned like `2.8.0-dev.12` and replaced each time; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
+Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as a prerelease on the [Releases page](https://github.com/wobkobi/VidGrab/releases) (`.github/workflows/dev-build.yml`). It previews the next version, e.g. `2.8.1-dev.12` after 2.8.0, and replaces the previous dev build; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
 2. Builds the helper.
