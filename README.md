@@ -269,7 +269,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it. `.github/workflows/release.yml` then:
+Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
 2. Builds the helper.
