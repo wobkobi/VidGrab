@@ -23,7 +23,7 @@ var childTemp struct {
 	dirty bool
 }
 
-// SetChildTempDir makes ChildEnv point TEMP, TMP and TMPDIR at dir ("" restores the
+// SetChildTempDir makes ChildEnv point TEMP and TMP at dir ("" restores the
 // inherited values). The caller creates dir.
 func SetChildTempDir(dir string) {
 	childTemp.mu.Lock()

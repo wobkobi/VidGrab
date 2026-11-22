@@ -4,7 +4,7 @@
 # another reason a release needs a version bump.
 #
 # The add-on is listed on AMO: each version is submitted there for review and Firefox updates it
-# from AMO once approved. The GitHub release carries the helpers. Submitting needs the AMO API
+# from AMO once approved. The GitHub release carries the Windows helper. Submitting needs the AMO API
 # key and secret (addons.mozilla.org > Developer Hub > Manage API Keys) in the WEB_EXT_API_KEY
 # and WEB_EXT_API_SECRET repository secrets.
 name: Release
@@ -30,9 +30,14 @@ permissions:
   contents: write
 
 jobs:
+  # Windows, so the helper's tests run on the only system it supports. Every step runs in Git
+  # Bash, which the runner image ships.
   release:
     name: Release
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -87,13 +92,12 @@ jobs:
 
       # Built before the AMO submission, which can't be taken back, so a failed build stops the
       # release first. windres embeds the Windows helper's icon and version details.
-      - name: Build the helpers
+      - name: Build the helper
         if: steps.version.outputs.new == 'true'
         run: |
-          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
           node scripts/build-helper.mjs
           mkdir -p release
-          cp dist/vidgrab-* release/
+          cp dist/VidGrab-Setup.exe release/
 
       # --approval-timeout 0 returns once AMO has the version, without waiting for the review,
       # which can take days. Firefox picks the version up from AMO after it is approved. AMO

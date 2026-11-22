@@ -939,8 +939,8 @@ type RunOptions struct {
 // probeBackend checks who holds the port; tests replace it.
 var probeBackend = auth.Probe
 
-// Listen binds the server's socket on 127.0.0.1:port, exclusively on Windows so no other
-// process can bind the same port alongside it.
+// Listen binds the server's socket on 127.0.0.1:port exclusively, so no other process can
+// bind the same port alongside it.
 func Listen(port int) (net.Listener, error) {
 	lc := net.ListenConfig{Control: exclusiveControl}
 	return lc.Listen(context.Background(), "tcp", fmt.Sprintf("%s:%d", Host, port))

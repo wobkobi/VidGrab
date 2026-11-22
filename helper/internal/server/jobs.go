@@ -284,7 +284,7 @@ type QueueConfig struct {
 }
 
 // defaultEncoders probes encoders once per server run, whichever queue asks first.
-var defaultEncoders = core.NewEncoderProbe(nil, "")
+var defaultEncoders = core.NewEncoderProbe(nil)
 
 // JobQueue is the thread-safe download queue.
 //
@@ -1114,8 +1114,8 @@ func readLines(r io.Reader, fn func(string)) {
 // execProcess is a real yt-dlp process whose stdout and stderr share one pipe.
 //
 // kill and Wait share mu so a kill can never reach a reused process id. The id stays
-// reserved until cmd.Wait reaps the process (Unix keeps it as a zombie, Windows keeps it
-// while cmd.Process holds its handle), and Wait sets waited under mu before calling
+// reserved until cmd.Wait reaps the process (Windows keeps it while cmd.Process holds its
+// handle), and Wait sets waited under mu before calling
 // cmd.Wait. So a signal sent under mu while !waited still reaches this process tree, and
 // once waited is set nothing is sent. Wait is only called after Output reached EOF, which
 // means the tree has closed the pipe and is exiting anyway.

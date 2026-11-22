@@ -19,8 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The helper only runs on Windows, so it is tested there; the runner image ships the
+  # mingw-w64 windres the build uses for the icon and version details
   helper:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -42,12 +44,9 @@ jobs:
         run: go test ./...
 
       # Dependabot pull requests are built too, and auto-merge queues patch and
-      # minor bumps, so this is the signal that a bump still compiles for every
-      # platform the release ships.
-      - name: Build all helpers
-        run: |
-          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
-          node scripts/build-helper.mjs
+      # minor bumps, so this is the signal that a bump still builds the release exe.
+      - name: Build the helper
+        run: node scripts/build-helper.mjs
 
   extension:
     runs-on: ubuntu-latest

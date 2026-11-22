@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -29,7 +28,7 @@ type installFixture struct {
 func newInstallFixture(t *testing.T) *installFixture {
 	t.Helper()
 	root := t.TempDir()
-	self := filepath.Join(root, "Downloads", ExeName("vidgrab-windows-amd64"))
+	self := filepath.Join(root, "Downloads", "VidGrab-Setup.exe")
 	if err := os.MkdirAll(filepath.Dir(self), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +36,11 @@ func newInstallFixture(t *testing.T) *installFixture {
 		t.Fatal(err)
 	}
 	f := &installFixture{self: self}
+	installDir := filepath.Join(root, "Local", AppName)
 	f.in = &Installer{
-		InstallDir:   filepath.Join(root, "Local", AppName),
-		ManifestPath: filepath.Join(root, "home", ".mozilla", "native-messaging-hosts", "vidgrab.json"),
+		InstallDir:   installDir,
+		ManifestPath: defaultManifestPath(installDir),
+		RegistryKey:  testRegistryKey,
 		StopServer: func() (bool, error) {
 			f.stops++
 			return false, nil
@@ -49,19 +50,16 @@ func newInstallFixture(t *testing.T) *installFixture {
 			return nil
 		},
 	}
-	if runtime.GOOS == "windows" {
-		f.in.RegistryKey = testRegistryKey
-		t.Cleanup(cleanupTestRegistry)
-	}
+	t.Cleanup(cleanupTestRegistry)
 	return f
 }
 
 func TestHostManifestShape(t *testing.T) {
-	data, err := json.Marshal(HostManifest("/opt/vidgrab"))
+	data, err := json.Marshal(HostManifest(`C:\VidGrab\vidgrab.exe`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"allowed_extensions":["yt-dl-firefox@local"],"description":"VidGrab download helper","name":"vidgrab","path":"/opt/vidgrab","type":"stdio"}`
+	want := `{"allowed_extensions":["yt-dl-firefox@local"],"description":"VidGrab download helper","name":"vidgrab","path":"C:\\VidGrab\\vidgrab.exe","type":"stdio"}`
 	if string(data) != want {
 		t.Fatalf("got %s", data)
 	}
@@ -90,10 +88,8 @@ func TestInstallCopiesAndRegisters(t *testing.T) {
 	if manifest["path"] != target || manifest["name"] != "vidgrab" || manifest["type"] != "stdio" {
 		t.Fatalf("manifest %v", manifest)
 	}
-	if runtime.GOOS == "windows" {
-		if got := readTestRegistry(t); got != f.in.ManifestPath {
-			t.Fatalf("registry default value %q, want %q", got, f.in.ManifestPath)
-		}
+	if got := readTestRegistry(t); got != f.in.ManifestPath {
+		t.Fatalf("registry default value %q, want %q", got, f.in.ManifestPath)
 	}
 	if !strings.Contains(report.String(), "Restart Firefox") {
 		t.Fatalf("report %q", report.String())
@@ -133,7 +129,7 @@ func TestUninstallRemovesEverything(t *testing.T) {
 	if _, err := f.in.Install(f.self); err != nil {
 		t.Fatal(err)
 	}
-	dataFile := filepath.Join(f.in.InstallDir, "data", "tools", "yt-dlp")
+	dataFile := filepath.Join(f.in.InstallDir, "data", "tools", "yt-dlp.exe")
 	if err := os.MkdirAll(filepath.Dir(dataFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +147,7 @@ func TestUninstallRemovesEverything(t *testing.T) {
 	if _, err := os.Stat(f.in.ManifestPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("manifest still exists")
 	}
-	if runtime.GOOS == "windows" && testRegistryExists() {
+	if testRegistryExists() {
 		t.Fatal("registry key still exists")
 	}
 	if report.PendingRemoval || len(f.scheduled) != 0 {
@@ -176,12 +172,6 @@ func TestUninstallFromInstalledCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.GOOS != "windows" {
-		if isDir(f.in.InstallDir) {
-			t.Fatal("unix removes the running binary's folder at once")
-		}
-		return
-	}
 	if !report.PendingRemoval || len(f.scheduled) != 1 || f.scheduled[0] != f.in.InstallDir {
 		t.Fatalf("PendingRemoval %v, scheduled %v", report.PendingRemoval, f.scheduled)
 	}
@@ -199,8 +189,8 @@ func TestPathWithin(t *testing.T) {
 	if pathWithin(filepath.Join(dir+"2", "vidgrab.exe"), dir) {
 		t.Fatal("sibling folder with the same prefix must not match")
 	}
-	if runtime.GOOS == "windows" && !pathWithin(strings.ToUpper(filepath.Join(dir, "x.exe")), dir) {
-		t.Fatal("Windows paths compare case-insensitively")
+	if !pathWithin(strings.ToUpper(filepath.Join(dir, "x.exe")), dir) {
+		t.Fatal("paths compare case-insensitively")
 	}
 }
 

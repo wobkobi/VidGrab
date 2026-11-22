@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,16 +72,12 @@ func StripID(base, id string) (stem string, ok bool) {
 }
 
 // SamePath reports whether two paths name the same file as yt-dlp prints them: equal once
-// cleaned, ignoring case on Windows, whose file names are case-insensitive.
+// cleaned, ignoring case because Windows file names are case-insensitive.
 func SamePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	a, b = filepath.Clean(a), filepath.Clean(b)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 // VideoSummaryTemplate is written to the comment tag of video files; "|" fallbacks keep it
@@ -148,8 +143,8 @@ type Runner func(ctx context.Context, argv []string) (stdout, stderr string, exi
 var PrepareCommand = func(cmd *exec.Cmd) {}
 
 // AfterStartCommand runs once a yt-dlp command has started, and the func it returns runs after
-// Wait returns (so after any ctx-driven cancel). The platform package sets it to lower the
-// priority on unix and to hold the process id on Windows until the cancel can no longer fire.
+// Wait returns (so after any ctx-driven cancel). The platform package sets it to hold the
+// process id until the cancel can no longer fire.
 var AfterStartCommand = func(cmd *exec.Cmd) (release func()) { return func() {} }
 
 // DefaultRunner runs argv with no stdin and ChildEnv, capturing both output streams. When ctx
@@ -389,15 +384,12 @@ func FetchRawInfo(ctx context.Context, tools Tools, url string, flat, cookies bo
 
 // ChildEnv returns the environment for yt-dlp children. The standalone yt-dlp build is a frozen
 // Python program, so the PYTHON* variables still force UTF-8, unbuffered output and keep
-// non-ASCII titles intact. Once SetChildTempDir has named a folder, TEMP and TMP (and TMPDIR
-// outside Windows) point there, so leftovers of killed runs can be swept (see TrackChild).
+// non-ASCII titles intact. Once SetChildTempDir has named a folder, TEMP and TMP point there,
+// so leftovers of killed runs can be swept (see TrackChild).
 func ChildEnv() []string {
 	overrides := [][2]string{{"PYTHONIOENCODING", "utf-8"}, {"PYTHONUTF8", "1"}, {"PYTHONUNBUFFERED", "1"}}
 	if dir := ChildTempDir(); dir != "" {
 		overrides = append(overrides, [2]string{"TEMP", dir}, [2]string{"TMP", dir})
-		if runtime.GOOS != "windows" {
-			overrides = append(overrides, [2]string{"TMPDIR", dir})
-		}
 	}
 	env := make([]string, 0, len(os.Environ())+len(overrides))
 	for _, entry := range os.Environ() {
@@ -405,7 +397,7 @@ func ChildEnv() []string {
 		replaced := false
 		for _, o := range overrides {
 			// Windows environment names are case-insensitive
-			if key == o[0] || (runtime.GOOS == "windows" && strings.EqualFold(key, o[0])) {
+			if strings.EqualFold(key, o[0]) {
 				replaced = true
 				break
 			}
