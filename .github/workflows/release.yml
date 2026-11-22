@@ -90,7 +90,7 @@ jobs:
       - name: Build the helpers
         if: steps.version.outputs.new == 'true'
         run: |
-          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
           node scripts/build-helper.mjs
           mkdir -p release
           cp dist/vidgrab-* release/

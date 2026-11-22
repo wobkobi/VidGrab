@@ -262,7 +262,7 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 
 ## Development
 
-Needs Go 1.22+, Node.js and, for the Windows helper, `windres` from [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (or `binutils-mingw-w64-x86-64` on Ubuntu) to embed its icon and version details.
+Needs Go 1.22+, Node.js and, for the Windows helper, `windres` from [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (or `gcc-mingw-w64-x86-64` on Ubuntu) to embed its icon and version details.
 
 ```bat
 cd helper

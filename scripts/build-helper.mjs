@@ -23,7 +23,7 @@ const TARGETS = [
 ];
 
 /**
- * Find a windres that targets 64-bit Windows: llvm-mingw and Ubuntu's binutils-mingw-w64-x86-64
+ * Find a windres that targets 64-bit Windows: llvm-mingw and Ubuntu's gcc-mingw-w64-x86-64
  * both ship the prefixed name, and a plain windres covers MSYS2.
  * @returns {string} The command to run.
  */
@@ -38,7 +38,7 @@ function findWindres() {
   }
   throw new Error(
     "windres not found. The Windows helper needs it to embed its icon and version details: install " +
-      "binutils-mingw-w64-x86-64 (Ubuntu) or llvm-mingw (Windows), or skip it with --only.",
+      "gcc-mingw-w64-x86-64 (Ubuntu) or llvm-mingw (Windows), or skip it with --only.",
   );
 }
 
