@@ -1,5 +1,5 @@
-// Cross-compile the VidGrab helper for every supported OS and CPU into dist/.
-// Usage: node scripts/build-helper.mjs [--only windows-amd64,darwin-arm64]
+// Build the VidGrab helper for Windows into dist/, with its icon and version details.
+// Usage: node scripts/build-helper.mjs
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,18 +13,12 @@ const dist = join(root, "dist");
 // The helper reports the add-on's version so /health and the popup agree
 const version = JSON.parse(readFileSync(join(root, "extension", "manifest.json"), "utf8")).version;
 
-// Windows on ARM runs the amd64 build under its x64 emulation, and ARM Linux desktops are rare,
-// so neither gets a build of its own
-const TARGETS = [
-  { goos: "windows", goarch: "amd64", name: "vidgrab-windows-amd64.exe" },
-  { goos: "darwin", goarch: "amd64", name: "vidgrab-macos-amd64" },
-  { goos: "darwin", goarch: "arm64", name: "vidgrab-macos-arm64" },
-  { goos: "linux", goarch: "amd64", name: "vidgrab-linux-amd64" },
-];
+// Windows on ARM runs this amd64 build under its x64 emulation, so it gets no build of its own
+const NAME = "VidGrab-Setup.exe";
 
 /**
- * Find a windres that targets 64-bit Windows: llvm-mingw and Ubuntu's gcc-mingw-w64-x86-64
- * both ship the prefixed name, and a plain windres covers MSYS2.
+ * Find a windres that targets 64-bit Windows: llvm-mingw ships the prefixed name, and a plain
+ * windres covers MSYS2 and the mingw-w64 on GitHub's Windows runners.
  * @returns {string} The command to run.
  */
 function findWindres() {
@@ -37,8 +31,8 @@ function findWindres() {
     }
   }
   throw new Error(
-    "windres not found. The Windows helper needs it to embed its icon and version details: install " +
-      "gcc-mingw-w64-x86-64 (Ubuntu) or llvm-mingw (Windows), or skip it with --only.",
+    "windres not found. The helper needs it to embed its icon and version details: install llvm-mingw " +
+      "or MSYS2's mingw-w64-x86_64-binutils and put its bin folder on PATH.",
   );
 }
 
@@ -95,23 +89,17 @@ END
   return syso;
 }
 
-const onlyIndex = process.argv.indexOf("--only");
-const only = onlyIndex > 0 ? new Set(process.argv[onlyIndex + 1].split(",")) : null;
-
 mkdirSync(dist, { recursive: true });
-for (const t of TARGETS) {
-  if (only && !only.has(`${t.goos}-${t.goarch}`)) continue;
-  const out = join(dist, t.name);
-  const syso = t.goos === "windows" ? writeWindowsResources(t.name) : null;
-  try {
-    // CGO off keeps every binary static, so it runs without a C runtime on the target
-    execFileSync("go", ["build", "-trimpath", "-ldflags", `-s -w -X main.version=${version}`, "-o", out, "."], {
-      cwd: helper,
-      stdio: "inherit",
-      env: { ...process.env, GOOS: t.goos, GOARCH: t.goarch, CGO_ENABLED: "0" },
-    });
-  } finally {
-    if (syso) rmSync(syso, { force: true });
-  }
-  console.log(`${t.name}  ${(statSync(out).size / 1048576).toFixed(1)} MB`);
+const out = join(dist, NAME);
+const syso = writeWindowsResources(NAME);
+try {
+  // CGO off keeps the binary static, so it runs without a C runtime
+  execFileSync("go", ["build", "-trimpath", "-ldflags", `-s -w -X main.version=${version}`, "-o", out, "."], {
+    cwd: helper,
+    stdio: "inherit",
+    env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },
+  });
+} finally {
+  rmSync(syso, { force: true });
 }
+console.log(`${NAME}  ${(statSync(out).size / 1048576).toFixed(1)} MB`);

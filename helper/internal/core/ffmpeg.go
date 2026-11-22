@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -24,38 +23,17 @@ const EncoderX264 = "libx264"
 // hardware H.264.
 const EncoderSvtAV1 = "libsvtav1"
 
-// EncoderVaapi is the Linux VA-API H.264 encoder (AMD and Intel GPUs).
-const EncoderVaapi = "h264_vaapi"
-
-// VaapiDevice is the render node VA-API encodes on. The first render node is the GPU on
-// nearly every single-GPU machine; machines where it is not simply fall back to libx264.
-const VaapiDevice = "/dev/dri/renderD128"
-
 // probeTimeout bounds one test encode; a hardware encoder that hangs initialising its driver
 // counts as missing.
 const probeTimeout = 15 * time.Second
 
-// encoderCandidates lists the hardware H.264 encoders worth probing on goos, best first: NVENC
-// is the fastest and most consistent at a fixed bitrate, then Intel Quick Sync, then AMD AMF
-// (or VA-API on Linux, which covers both AMD and Intel). macOS has only VideoToolbox.
-func encoderCandidates(goos string) []string {
-	switch goos {
-	case "windows":
-		return []string{"h264_nvenc", "h264_qsv", "h264_amf"}
-	case "darwin":
-		return []string{"h264_videotoolbox"}
-	case "linux":
-		return []string{"h264_nvenc", "h264_qsv", EncoderVaapi}
-	}
-	return nil
-}
+// encoderCandidates lists the hardware H.264 encoders worth probing, best first: NVENC is the
+// fastest and most consistent at a fixed bitrate, then Intel Quick Sync, then AMD AMF.
+var encoderCandidates = []string{"h264_nvenc", "h264_qsv", "h264_amf"}
 
-// FfmpegPath returns the ffmpeg executable from tools.FfmpegDir, or plain "ffmpeg" for PATH.
+// FfmpegPath returns the ffmpeg executable from tools.FfmpegDir, or plain "ffmpeg.exe" for PATH.
 func FfmpegPath(tools Tools) string {
-	name := "ffmpeg"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
+	const name = "ffmpeg.exe"
 	if tools.FfmpegDir == "" {
 		return name
 	}
@@ -65,10 +43,7 @@ func FfmpegPath(tools Tools) string {
 // EncoderProbe finds the best working H.264 encoder once per ffmpeg binary and remembers it
 // for the life of the process. The zero value is not usable; call NewEncoderProbe.
 type EncoderProbe struct {
-	run  Runner
-	goos string
-	// exists reports whether a device path exists; VA-API is skipped without its render node
-	exists func(path string) bool
+	run Runner
 
 	// lock is a one-slot semaphore rather than a mutex so a caller waiting for another job's
 	// probe can give up when its context ends
@@ -76,24 +51,12 @@ type EncoderProbe struct {
 	cache map[string]string
 }
 
-// NewEncoderProbe returns a probe that runs test encodes through run (DefaultRunner when nil)
-// and tries the hardware encoders for goos ("" means runtime.GOOS).
-func NewEncoderProbe(run Runner, goos string) *EncoderProbe {
+// NewEncoderProbe returns a probe that runs test encodes through run (DefaultRunner when nil).
+func NewEncoderProbe(run Runner) *EncoderProbe {
 	if run == nil {
 		run = DefaultRunner
 	}
-	if goos == "" {
-		goos = runtime.GOOS
-	}
-	return &EncoderProbe{
-		run: run, goos: goos, exists: pathExists,
-		lock: make(chan struct{}, 1), cache: map[string]string{},
-	}
-}
-
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return &EncoderProbe{run: run, lock: make(chan struct{}, 1), cache: map[string]string{}}
 }
 
 // Pick returns the first hardware encoder whose one-frame test encode succeeds, else
@@ -115,10 +78,7 @@ func (p *EncoderProbe) Pick(ctx context.Context, ffmpeg string) string {
 		return encoder
 	}
 	encoder := EncoderX264
-	for _, candidate := range encoderCandidates(p.goos) {
-		if candidate == EncoderVaapi && !p.exists(VaapiDevice) {
-			continue
-		}
+	for _, candidate := range encoderCandidates {
 		if p.works(ctx, ffmpeg, candidate) {
 			encoder = candidate
 			break
@@ -134,30 +94,12 @@ func (p *EncoderProbe) Pick(ctx context.Context, ffmpeg string) string {
 func (p *EncoderProbe) works(ctx context.Context, ffmpeg, encoder string) bool {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	argv := []string{ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error"}
-	argv = append(argv, deviceArgs(encoder)...)
-	argv = append(argv, "-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.1", "-frames:v", "1")
-	if encoder == EncoderVaapi {
-		argv = append(argv, "-vf", vaapiUpload)
-	}
+	argv := []string{ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "color=c=black:s=256x144:d=0.1", "-frames:v", "1"}
 	argv = append(argv, videoCodecArgs(encoder, 500, 144, 0)...)
 	argv = append(argv, "-f", "null", "-")
 	_, _, code, err := p.run(ctx, argv)
 	return err == nil && code == 0
-}
-
-// vaapiUpload ends a VA-API filter chain: frames are converted to NV12 in system memory, then
-// uploaded to the GPU surface the encoder reads. Scaling happens before it, on the CPU, so the
-// same scale expression serves every encoder.
-const vaapiUpload = "format=nv12,hwupload"
-
-// deviceArgs returns the global options an encoder needs before the input: VA-API must be told
-// which render node to open.
-func deviceArgs(encoder string) []string {
-	if encoder == EncoderVaapi {
-		return []string{"-vaapi_device", VaapiDevice}
-	}
-	return nil
 }
 
 // svtLongSeconds is the output length from which SVT-AV1 always runs preset 8: at 360p15
@@ -194,8 +136,8 @@ func svtPreset(height int, seconds float64) string {
 // they are told to hold a constant bitrate; libx264's two passes spread bits where they help,
 // and preset slower is worth its time because libx264 only runs at low bitrates (see
 // HardwareMinKbps), where every bit counts.
-// QSV wants NV12 input and VA-API takes the uploaded surface as it is; the others take plain
-// 4:2:0, which also turns 10-bit HDR sources into the 8-bit stream every player handles.
+// QSV wants NV12 input; the others take plain 4:2:0, which also turns 10-bit HDR sources into
+// the 8-bit stream every player handles.
 func videoCodecArgs(encoder string, kbps, height int, seconds float64) []string {
 	rate := strconv.Itoa(kbps) + "k"
 	buffer := strconv.Itoa(kbps*2) + "k"
@@ -206,17 +148,12 @@ func videoCodecArgs(encoder string, kbps, height int, seconds float64) []string 
 	switch encoder {
 	case "h264_nvenc", "h264_amf":
 		args = append(args, "-rc", "cbr")
-	case EncoderVaapi:
-		args = append(args, "-rc_mode", "CBR")
 	case EncoderX264:
 		args = append(args, "-preset", "slower")
 	}
 	args = append(args, "-b:v", rate, "-maxrate", rate, "-bufsize", buffer)
-	switch encoder {
-	case "h264_qsv":
+	if encoder == "h264_qsv" {
 		return append(args, "-pix_fmt", "nv12")
-	case EncoderVaapi:
-		return args
 	}
 	return append(args, "-pix_fmt", "yuv420p")
 }
@@ -259,20 +196,13 @@ func fpsArg(fps float64) string {
 // errors, so FfmpegProgress can tell the two apart. The final pass maps the first video and
 // (when present) first audio stream, copies the source's tags with -map_metadata so the
 // title, channel and URL yt-dlp embedded survive, and moves the index to the front
-// (+faststart) so the video starts playing before it has fully loaded. VA-API opens its
-// render node before the input and uploads the scaled frames at the end of the filter chain.
+// (+faststart) so the video starts playing before it has fully loaded.
 func (e EncodeJob) Passes() [][]string {
 	head := func() []string {
-		args := []string{e.Ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats",
-			"-progress", "pipe:1", "-y"}
-		args = append(args, deviceArgs(e.Encoder)...)
-		return append(args, "-i", e.Source)
+		return []string{e.Ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats",
+			"-progress", "pipe:1", "-y", "-i", e.Source}
 	}
-	filter := scaleFilter(e.Plan.Height)
-	if e.Encoder == EncoderVaapi {
-		filter += "," + vaapiUpload
-	}
-	video := []string{"-vf", filter}
+	video := []string{"-vf", scaleFilter(e.Plan.Height)}
 	if e.Plan.FPS > 0 {
 		video = append(video, "-fpsmax", fpsArg(e.Plan.FPS))
 	}

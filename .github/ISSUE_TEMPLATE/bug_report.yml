@@ -36,16 +36,11 @@ body:
       placeholder: Add-on 2.5.1, helper 2.5.1, yt-dlp 2026.11.01, Firefox 145
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: os
     attributes:
-      label: Operating system
-      options:
-        - Windows
-        - macOS
-        - Linux
-    validations:
-      required: true
+      label: Windows version
+      placeholder: Windows 11 24H2
   - type: textarea
     id: log
     attributes:

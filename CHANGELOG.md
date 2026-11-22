@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
+## [2.8.0] - 2026-11-23
+
+### Removed
+
+- **Helper:** macOS and Linux builds. VidGrab supports Windows 10 and 11 only. A macOS or Linux helper
+  that is already installed keeps working with this add-on, but gets no new versions.
+
+### Changed
+
+- **Helper:** The download is called `VidGrab-Setup.exe`. It installs itself as before.
+
 ## [2.7.1] - 2026-11-22
 
 ### Changed

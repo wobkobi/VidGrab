@@ -3,7 +3,6 @@ package core
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
 )
@@ -42,11 +41,7 @@ func TestChildEnvUsesPrivateTemp(t *testing.T) {
 	}
 	dir := useChildTemp(t)
 	env := ChildEnv()
-	want := []string{"TEMP=" + dir, "TMP=" + dir}
-	if runtime.GOOS != "windows" {
-		want = append(want, "TMPDIR="+dir)
-	}
-	for _, w := range want {
+	for _, w := range []string{"TEMP=" + dir, "TMP=" + dir} {
 		if !slices.Contains(env, w) {
 			t.Errorf("env lacks %q", w)
 		}

@@ -4,7 +4,6 @@
 package system
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"bufio"
 	"context"
@@ -25,8 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ulikunitz/xz"
-
 	"vidgrab/internal/core"
 )
 
@@ -40,8 +37,6 @@ const (
 const (
 	// DefaultGitHubAPI is the GitHub REST API base used for release lookups.
 	DefaultGitHubAPI = "https://api.github.com"
-	// DefaultMacFFmpegBase serves the static macOS ffmpeg builds.
-	DefaultMacFFmpegBase = "https://ffmpeg.martin-riedl.de"
 	// IgnorePathFFmpegEnv set to "1" makes the helper download ffmpeg even when PATH has one.
 	IgnorePathFFmpegEnv = "VIDGRAB_IGNORE_PATH_FFMPEG"
 
@@ -73,12 +68,10 @@ type Tools struct {
 	Dir string
 	// GitHubAPI is the GitHub REST API base URL.
 	GitHubAPI string
-	// MacFFmpegBase is the base URL of the macOS ffmpeg builds.
-	MacFFmpegBase string
 	// Client performs every HTTP request.
 	Client *http.Client
-	// GOOS and GOARCH pick the assets to download.
-	GOOS, GOARCH string
+	// GOARCH picks the Windows assets to download.
+	GOARCH string
 	// IgnorePathFFmpeg forces the ffmpeg download even when PATH has ffmpeg and ffprobe.
 	IgnorePathFFmpeg bool
 	// LookPath resolves commands on PATH.
@@ -124,16 +117,14 @@ func (h httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
 	return h.next.RoundTrip(r)
 }
 
-// NewTools returns a Tools for dir with the real network, platform and PATH.
+// NewTools returns a Tools for dir with the real network, architecture and PATH.
 func NewTools(dir string) *Tools {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &Tools{
 		Dir:              dir,
 		GitHubAPI:        DefaultGitHubAPI,
-		MacFFmpegBase:    DefaultMacFFmpegBase,
 		Client:           &http.Client{Transport: httpsOnly{transport}},
-		GOOS:             runtime.GOOS,
 		GOARCH:           runtime.GOARCH,
 		IgnorePathFFmpeg: os.Getenv(IgnorePathFFmpegEnv) == "1",
 		LookPath:         exec.LookPath,
@@ -161,18 +152,11 @@ func (t *Tools) Paths() (ytdlp string, ffmpegDir string, ok bool) {
 
 // YtdlpPath returns where the yt-dlp binary lives (whether or not it exists yet).
 func (t *Tools) YtdlpPath() string {
-	return filepath.Join(t.Dir, t.exe("yt-dlp"))
+	return filepath.Join(t.Dir, "yt-dlp.exe")
 }
 
 func (t *Tools) localFFmpegDir() string {
 	return filepath.Join(t.Dir, "ffmpeg")
-}
-
-func (t *Tools) exe(name string) string {
-	if t.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
 }
 
 // setupPlan lists what Ensure still has to download and where ffmpeg comes from.
@@ -190,8 +174,8 @@ func (t *Tools) plan() setupPlan {
 	}
 	local := t.localFFmpegDir()
 	p.ffmpegDir = local
-	p.ffmpeg = !fileExists(filepath.Join(local, t.exe("ffmpeg"))) ||
-		!fileExists(filepath.Join(local, t.exe("ffprobe")))
+	p.ffmpeg = !fileExists(filepath.Join(local, "ffmpeg.exe")) ||
+		!fileExists(filepath.Join(local, "ffprobe.exe"))
 	return p
 }
 
@@ -389,44 +373,34 @@ func (t *Tools) Update(ctx context.Context) (string, error) {
 	return rel.TagName, nil
 }
 
-// ytdlpAssetName returns the standalone yt-dlp release asset for a platform. The macOS
-// build is universal (amd64 and arm64).
-func ytdlpAssetName(goos, goarch string) (string, error) {
-	switch goos + "/" + goarch {
-	case "windows/amd64":
+// ytdlpAssetName returns the standalone Windows yt-dlp release asset for goarch.
+func ytdlpAssetName(goarch string) (string, error) {
+	switch goarch {
+	case "amd64":
 		return "yt-dlp.exe", nil
-	case "windows/arm64":
+	case "arm64":
 		return "yt-dlp_arm64.exe", nil
-	case "windows/386":
+	case "386":
 		return "yt-dlp_x86.exe", nil
-	case "darwin/amd64", "darwin/arm64":
-		return "yt-dlp_macos", nil
-	case "linux/amd64":
-		return "yt-dlp_linux", nil
-	case "linux/arm64":
-		return "yt-dlp_linux_aarch64", nil
 	}
-	return "", fmt.Errorf("no yt-dlp build for %s/%s", goos, goarch)
+	return "", fmt.Errorf("no yt-dlp build for windows/%s", goarch)
 }
 
-// ffmpegAssetName returns the yt-dlp/FFmpeg-Builds asset for Windows and Linux. The static
-// "gpl" builds are used: the "-shared" ones need their DLLs next to the binaries.
-func ffmpegAssetName(goos, goarch string) (string, error) {
-	switch goos + "/" + goarch {
-	case "windows/amd64":
+// ffmpegAssetName returns the Windows yt-dlp/FFmpeg-Builds asset for goarch. The static
+// "gpl" builds are used: the "-shared" ones need their DLLs next to the binaries. There is
+// no 32-bit build.
+func ffmpegAssetName(goarch string) (string, error) {
+	switch goarch {
+	case "amd64":
 		return "ffmpeg-master-latest-win64-gpl.zip", nil
-	case "windows/arm64":
+	case "arm64":
 		return "ffmpeg-master-latest-winarm64-gpl.zip", nil
-	case "linux/amd64":
-		return "ffmpeg-master-latest-linux64-gpl.tar.xz", nil
-	case "linux/arm64":
-		return "ffmpeg-master-latest-linuxarm64-gpl.tar.xz", nil
 	}
-	return "", fmt.Errorf("no ffmpeg build for %s/%s", goos, goarch)
+	return "", fmt.Errorf("no ffmpeg build for windows/%s", goarch)
 }
 
 func (t *Tools) installYtdlp(ctx context.Context, rel *release, progress func(int64, int64)) error {
-	name, err := ytdlpAssetName(t.GOOS, t.GOARCH)
+	name, err := ytdlpAssetName(t.GOARCH)
 	if err != nil {
 		return err
 	}
@@ -482,10 +456,7 @@ func (t *Tools) installFFmpeg(ctx context.Context, progress func(int64, int64)) 
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	if t.GOOS == "darwin" {
-		return t.installMacFFmpeg(ctx, dest, progress)
-	}
-	name, err := ffmpegAssetName(t.GOOS, t.GOARCH)
+	name, err := ffmpegAssetName(t.GOARCH)
 	if err != nil {
 		return err
 	}
@@ -503,79 +474,7 @@ func (t *Tools) installFFmpeg(ctx context.Context, progress func(int64, int64)) 
 	}
 	defer os.Remove(tmp)
 	t.setStep("Unpacking ffmpeg", t.Status().Percent)
-	kind := "zip"
-	if strings.HasSuffix(name, ".tar.xz") {
-		kind = "tar.xz"
-	}
-	return extractTools(tmp, kind, dest, []string{t.exe("ffmpeg"), t.exe("ffprobe")})
-}
-
-// installMacFFmpeg fetches ffmpeg and ffprobe from the martin-riedl.de static builds.
-//
-// The site's /redirect/latest/... URLs answer GET with a 307 to a versioned folder (HEAD
-// gets a 404), and the checksum sits next to the real file as "<file>.sha256" - the
-// redirect path itself has no .sha256 variant. So the redirect is resolved without
-// following it, and both files are fetched from the versioned folder.
-func (t *Tools) installMacFFmpeg(ctx context.Context, dest string, progress func(int64, int64)) error {
-	arch := t.GOARCH
-	if arch != "amd64" && arch != "arm64" {
-		return fmt.Errorf("no ffmpeg build for darwin/%s", arch)
-	}
-	tools := []string{"ffmpeg", "ffprobe"}
-	for i, tool := range tools {
-		redirect := fmt.Sprintf("%s/redirect/latest/macos/%s/release/%s.zip", strings.TrimRight(t.MacFFmpegBase, "/"), arch, tool)
-		location, err := t.resolveRedirect(ctx, redirect)
-		if err != nil {
-			return err
-		}
-		sums, err := t.fetchChecksums(ctx, location+".sha256")
-		if err != nil {
-			return err
-		}
-		want, ok := sums[tool+".zip"]
-		if !ok {
-			return fmt.Errorf("no checksum for %s.zip", tool)
-		}
-		share := 1 / float64(len(tools))
-		stepProgress := func(done, total int64) {
-			if progress != nil && total > 0 {
-				progress(int64((float64(i)+float64(done)/float64(total))*share*1e6), 1e6)
-			}
-		}
-		tmp, err := t.download(ctx, location, 0, want, stepProgress)
-		if err != nil {
-			return fmt.Errorf("%s download failed: %w", tool, err)
-		}
-		err = extractTools(tmp, "zip", dest, []string{tool})
-		os.Remove(tmp)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// resolveRedirect GETs url without following the redirect and returns the absolute target.
-func (t *Tools) resolveRedirect(ctx context.Context, url string) (string, error) {
-	client := *t.client()
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	req, err := t.newRequest(ctx, url)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	resp.Body.Close()
-	if resp.StatusCode < 300 || resp.StatusCode > 399 {
-		return "", fmt.Errorf("%s answered HTTP %d instead of a redirect", url, resp.StatusCode)
-	}
-	location, err := resp.Location()
-	if err != nil {
-		return "", err
-	}
-	return location.String(), nil
+	return extractTools(tmp, dest, []string{"ffmpeg.exe", "ffprobe.exe"})
 }
 
 func (t *Tools) client() *http.Client {
@@ -744,11 +643,11 @@ func (w *watchedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// extractTools copies the regular files whose base name is in names out of a zip or
-// tar.xz archive into dest. Entry paths are never used to build the output path, only the
-// fixed base names, so a hostile archive cannot write outside dest (zip-slip). Every name
-// must be found.
-func extractTools(archive, kind, dest string, names []string) error {
+// extractTools copies the regular files whose base name is in names out of a zip archive
+// into dest. Entry paths are never used to build the output path, only the fixed base
+// names, so a hostile archive cannot write outside dest (zip-slip). Every name must be
+// found.
+func extractTools(archive, dest string, names []string) error {
 	wanted := map[string]bool{}
 	for _, name := range names {
 		wanted[name] = true
@@ -766,16 +665,7 @@ func extractTools(archive, kind, dest string, names []string) error {
 		return nil
 	}
 
-	var err error
-	switch kind {
-	case "zip":
-		err = extractZip(archive, take)
-	case "tar.xz":
-		err = extractTarXz(archive, take, func() bool { return len(found) == len(wanted) })
-	default:
-		err = fmt.Errorf("unknown archive type %q", kind)
-	}
-	if err != nil {
+	if err := extractZip(archive, take); err != nil {
 		return err
 	}
 	for _, name := range names {
@@ -809,35 +699,6 @@ func extractZip(archive string, take func(string, io.Reader) error) error {
 	return nil
 }
 
-func extractTarXz(archive string, take func(string, io.Reader) error, done func() bool) error {
-	f, err := os.Open(archive)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	xr, err := xz.NewReader(bufio.NewReader(f))
-	if err != nil {
-		return err
-	}
-	tr := tar.NewReader(xr)
-	for !done() {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		if err := take(hdr.Name, tr); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // writeExecutable writes r to dest/name through a temp file and an atomic rename.
 func writeExecutable(r io.Reader, dest, name string) (err error) {
 	out, err := os.CreateTemp(dest, ".extract-*.tmp")
@@ -863,19 +724,15 @@ func writeExecutable(r io.Reader, dest, name string) (err error) {
 	return replaceFile(out.Name(), filepath.Join(dest, name))
 }
 
-// replaceFile marks tmp executable and renames it over target, removing tmp on failure.
+// replaceFile renames tmp over target, removing tmp on failure.
 //
 // Windows refuses to overwrite an executable that is running (yt-dlp serving an /info call)
-// but does allow renaming it, so there the old file is first moved aside to "<target>.old".
-// That file is deleted best-effort straight away, or by sweepLeftovers on a later start once
-// the process holding it has exited. A failed swap puts the old file back.
+// but does allow renaming it, so the old file is first moved aside to "<target>.old". That
+// file is deleted best-effort straight away, or by sweepLeftovers on a later start once the
+// process holding it has exited. A failed swap puts the old file back.
 func replaceFile(tmp, target string) error {
-	if err := os.Chmod(tmp, 0o755); err != nil {
-		os.Remove(tmp)
-		return err
-	}
 	old := ""
-	if runtime.GOOS == "windows" && fileExists(target) {
+	if fileExists(target) {
 		old = target + ".old"
 		_ = os.Remove(old)
 		if err := os.Rename(target, old); err != nil {

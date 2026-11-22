@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -52,13 +51,13 @@ type Installer struct {
 	InstallDir string
 	// ManifestPath is where the native host manifest is written.
 	ManifestPath string
-	// RegistryKey is the HKCU-relative key pointing Firefox at the manifest (Windows only;
-	// empty elsewhere).
+	// RegistryKey is the HKCU-relative key pointing Firefox at the manifest; empty skips the
+	// registry step.
 	RegistryKey string
 	// StopServer stops a running helper server and reports whether one was running.
 	StopServer func() (bool, error)
-	// ScheduleRemoval deletes dir after this process exits (Windows, where a running
-	// executable cannot delete itself).
+	// ScheduleRemoval deletes dir after this process exits, since a running executable cannot
+	// delete itself.
 	ScheduleRemoval func(dir string) error
 }
 
@@ -115,7 +114,7 @@ func HostManifest(path string) map[string]any {
 }
 
 // Install copies selfPath to the install directory (skipped when it already runs from
-// there), writes the native host manifest and, on Windows, the registry key.
+// there), writes the native host manifest and the registry key.
 //
 // A running server is stopped first, since Windows cannot replace a running executable.
 func (in *Installer) Install(selfPath string) (Report, error) {
@@ -159,8 +158,8 @@ func (in *Installer) Install(selfPath string) (Report, error) {
 
 // Uninstall stops the server, removes the registry key, the manifest and the install
 // directory. selfPath is the running executable: when it lives inside the install
-// directory on Windows, the folder is deleted by a short-lived cmd.exe after this process
-// exits, and Report.PendingRemoval is set.
+// directory, the folder is deleted by a short-lived cmd.exe after this process exits, and
+// Report.PendingRemoval is set.
 func (in *Installer) Uninstall(selfPath string) (Report, error) {
 	report := Report{InstalledPath: in.InstalledBinary(), ManifestPath: in.ManifestPath, RegistryKey: in.RegistryKey}
 	in.stop(&report)
@@ -187,7 +186,7 @@ func (in *Installer) Uninstall(selfPath string) (Report, error) {
 		report.addf("Install folder was not present")
 		return report, errors.Join(errs...)
 	}
-	if runtime.GOOS == "windows" && selfPath != "" && pathWithin(selfPath, in.InstallDir) {
+	if selfPath != "" && pathWithin(selfPath, in.InstallDir) {
 		if err := removeAllExcept(in.InstallDir, selfPath); err != nil {
 			errs = append(errs, err)
 		}
@@ -273,7 +272,7 @@ func stopServer(port int, token string) (bool, error) {
 
 // copyExecutable copies src to dst through a temp file and an atomic rename.
 //
-// A just-stopped server can hold dst for a moment, so the rename is retried. Windows also
+// A just-stopped server can hold dst for a moment, so the rename is retried. Windows
 // refuses to overwrite a running executable but does allow renaming it, so a stuck dst is
 // moved aside to "<dst>.old" (removed best-effort, or on the next install).
 func copyExecutable(src, dst string) (err error) {
@@ -296,9 +295,6 @@ func copyExecutable(src, dst string) (err error) {
 		return err
 	}
 	if err = out.Close(); err != nil {
-		return err
-	}
-	if err = os.Chmod(out.Name(), 0o755); err != nil {
 		return err
 	}
 	old := dst + ".old"
@@ -329,12 +325,9 @@ func sameFile(a, b string) bool {
 	return os.SameFile(ia, ib)
 }
 
-// pathWithin reports whether p lies inside dir (case-insensitively on Windows).
+// pathWithin reports whether p lies inside dir, ignoring case as Windows paths do.
 func pathWithin(p, dir string) bool {
-	dir, p = filepath.Clean(dir), filepath.Clean(p)
-	if runtime.GOOS == "windows" {
-		dir, p = strings.ToLower(dir), strings.ToLower(p)
-	}
+	dir, p = strings.ToLower(filepath.Clean(dir)), strings.ToLower(filepath.Clean(p))
 	rel, err := filepath.Rel(dir, p)
 	if err != nil {
 		return false

@@ -22,9 +22,9 @@ const (
 	// installer still stops a server there when no port file exists yet.
 	LegacyPort = 18956
 
-	// portLow and portHigh bound the random pick. The range sits below the ports operating
-	// systems hand out for outgoing connections (49152 and up on Windows and macOS, 32768 and
-	// up on Linux), so a connection the OS opens can never be holding the port.
+	// portLow and portHigh bound the random pick. The range sits well below the ports Windows
+	// hands out for outgoing connections (49152 and up), so a connection the OS opens can
+	// never be holding the port.
 	portLow  = 20000
 	portHigh = 32767
 	// portTries bounds how many random ports are tried before giving up; a few busy ones are

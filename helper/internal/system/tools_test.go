@@ -1,7 +1,6 @@
 package system
 
 import (
-	"archive/tar"
 	"archive/zip"
 	"bytes"
 	"context"
@@ -20,12 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ulikunitz/xz"
-
 	"vidgrab/internal/core"
 )
 
-// fakeGitHub serves the two release APIs, their assets and the macOS ffmpeg site.
+// fakeGitHub serves the yt-dlp and FFmpeg-Builds release APIs and their assets.
 type fakeGitHub struct {
 	srv       *httptest.Server
 	mu        sync.Mutex
@@ -108,25 +105,6 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(f.ytdlp[strings.TrimPrefix(path, "/yt/")])
 	case strings.HasPrefix(path, "/ff/"):
 		_, _ = w.Write(f.ffmpeg[strings.TrimPrefix(path, "/ff/")])
-	case strings.HasPrefix(path, "/redirect/latest/macos/arm64/release/"):
-		// Mirrors martin-riedl.de: the redirect has no .sha256 form, the real folder does
-		name := strings.TrimPrefix(path, "/redirect/latest/macos/arm64/release/")
-		if strings.HasSuffix(name, ".sha256") || r.Method != http.MethodGet {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/download/macos/arm64/1789931890_9.0.2/"+name, http.StatusTemporaryRedirect)
-	case strings.HasPrefix(path, "/download/macos/arm64/1789931890_9.0.2/"):
-		name := strings.TrimPrefix(path, "/download/macos/arm64/1789931890_9.0.2/")
-		if zipName, ok := strings.CutSuffix(name, ".sha256"); ok {
-			digest := sha(f.ffmpeg[zipName])
-			if f.badSums[zipName] {
-				digest = strings.Repeat("0", 64)
-			}
-			fmt.Fprintf(w, "%s  %s\n", digest, zipName)
-			return
-		}
-		_, _ = w.Write(f.ffmpeg[name])
 	default:
 		http.NotFound(w, r)
 	}
@@ -138,6 +116,7 @@ func (f *fakeGitHub) count(path string) int {
 	return f.downloads[path]
 }
 
+// archiveEntry is one zip entry; a symlink entry stores body as its link target.
 type archiveEntry struct {
 	name    string
 	body    string
@@ -149,7 +128,11 @@ func makeZip(t *testing.T, entries []archiveEntry) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, e := range entries {
-		w, err := zw.Create(e.name)
+		hdr := &zip.FileHeader{Name: e.name, Method: zip.Deflate}
+		if e.symlink {
+			hdr.SetMode(os.ModeSymlink | 0o777)
+		}
+		w, err := zw.CreateHeader(hdr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,46 +144,16 @@ func makeZip(t *testing.T, entries []archiveEntry) []byte {
 	return buf.Bytes()
 }
 
-func makeTarXz(t *testing.T, entries []archiveEntry) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	xw, err := xz.NewWriter(&buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tw := tar.NewWriter(xw)
-	for _, e := range entries {
-		hdr := &tar.Header{Name: e.name, Mode: 0o755, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
-		if e.symlink {
-			hdr = &tar.Header{Name: e.name, Linkname: e.body, Typeflag: tar.TypeSymlink}
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if !e.symlink {
-			_, _ = tw.Write([]byte(e.body))
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := xw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
 func notFound(string) (string, error) { return "", errors.New("not found") }
 
-func onPath(name string) (string, error) { return "/usr/bin/" + name, nil }
+func onPath(name string) (string, error) { return `C:\ffmpeg\bin\` + name + ".exe", nil }
 
-func (f *fakeGitHub) tools(t *testing.T, goos, goarch string) *Tools {
+func (f *fakeGitHub) tools(t *testing.T, goarch string) *Tools {
 	t.Helper()
 	tools := NewTools(filepath.Join(t.TempDir(), "tools"))
 	tools.GitHubAPI = f.srv.URL
-	tools.MacFFmpegBase = f.srv.URL
 	tools.Client = f.srv.Client()
-	tools.GOOS, tools.GOARCH = goos, goarch
+	tools.GOARCH = goarch
 	tools.IgnorePathFFmpeg = false
 	tools.LookPath = notFound
 	return tools
@@ -229,32 +182,29 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestAssetSelection(t *testing.T) {
-	cases := []struct{ goos, goarch, ytdlp, ffmpeg string }{
-		{"windows", "amd64", "yt-dlp.exe", "ffmpeg-master-latest-win64-gpl.zip"},
-		{"windows", "arm64", "yt-dlp_arm64.exe", "ffmpeg-master-latest-winarm64-gpl.zip"},
-		{"linux", "amd64", "yt-dlp_linux", "ffmpeg-master-latest-linux64-gpl.tar.xz"},
-		{"linux", "arm64", "yt-dlp_linux_aarch64", "ffmpeg-master-latest-linuxarm64-gpl.tar.xz"},
-		{"darwin", "amd64", "yt-dlp_macos", ""},
-		{"darwin", "arm64", "yt-dlp_macos", ""},
+	cases := []struct{ goarch, ytdlp, ffmpeg string }{
+		{"amd64", "yt-dlp.exe", "ffmpeg-master-latest-win64-gpl.zip"},
+		{"arm64", "yt-dlp_arm64.exe", "ffmpeg-master-latest-winarm64-gpl.zip"},
+		{"386", "yt-dlp_x86.exe", ""},
 	}
 	for _, c := range cases {
-		got, err := ytdlpAssetName(c.goos, c.goarch)
+		got, err := ytdlpAssetName(c.goarch)
 		if err != nil || got != c.ytdlp {
-			t.Errorf("yt-dlp %s/%s = %q, %v; want %q", c.goos, c.goarch, got, err, c.ytdlp)
+			t.Errorf("yt-dlp %s = %q, %v; want %q", c.goarch, got, err, c.ytdlp)
 		}
+		got, err = ffmpegAssetName(c.goarch)
 		if c.ffmpeg == "" {
+			if err == nil {
+				t.Errorf("ffmpeg %s = %q; want an error, there is no build", c.goarch, got)
+			}
 			continue
 		}
-		got, err = ffmpegAssetName(c.goos, c.goarch)
 		if err != nil || got != c.ffmpeg {
-			t.Errorf("ffmpeg %s/%s = %q, %v; want %q", c.goos, c.goarch, got, err, c.ffmpeg)
+			t.Errorf("ffmpeg %s = %q, %v; want %q", c.goarch, got, err, c.ffmpeg)
 		}
 	}
-	if _, err := ytdlpAssetName("plan9", "amd64"); err == nil {
-		t.Error("unsupported platform should be an error")
-	}
-	if _, err := ffmpegAssetName("linux", "riscv64"); err == nil {
-		t.Error("unsupported platform should be an error")
+	if _, err := ytdlpAssetName("riscv64"); err == nil {
+		t.Error("unsupported architecture should be an error")
 	}
 }
 
@@ -275,8 +225,8 @@ func TestParseChecksums(t *testing.T) {
 func TestPathFFmpegDownloadsOnlyYtdlp(t *testing.T) {
 	f := newFakeGitHub(t)
 	f.ytdlp["yt-dlp.exe"] = []byte("windows yt-dlp")
-	f.ytdlp["yt-dlp_linux"] = []byte("linux yt-dlp")
-	tools := f.tools(t, "windows", "amd64")
+	f.ytdlp["yt-dlp_arm64.exe"] = []byte("arm yt-dlp")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 
 	if _, _, ok := tools.Paths(); ok {
@@ -317,7 +267,7 @@ func TestForcedFFmpegDownloadFromZip(t *testing.T) {
 		{name: "../../escape.exe", body: "zip-slip"},
 		{name: "ffmpeg-master-latest-win64-gpl/doc/ffmpeg.html", body: "docs"},
 	})
-	tools := f.tools(t, "windows", "amd64")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 	tools.IgnorePathFFmpeg = true
 
@@ -351,29 +301,50 @@ func TestForcedFFmpegDownloadFromZip(t *testing.T) {
 	}
 }
 
-func TestFFmpegFromTarXzSkipsLinks(t *testing.T) {
+func TestArm64FFmpegSkipsLinks(t *testing.T) {
 	f := newFakeGitHub(t)
-	f.ytdlp["yt-dlp_linux_aarch64"] = []byte("arm yt-dlp")
-	f.ffmpeg["ffmpeg-master-latest-linuxarm64-gpl.tar.xz"] = makeTarXz(t, []archiveEntry{
-		{name: "ffmpeg-master-latest-linuxarm64-gpl/bin/ffprobe", body: "/etc/passwd", symlink: true},
-		{name: "ffmpeg-master-latest-linuxarm64-gpl/bin/ffmpeg", body: "ffmpeg elf"},
-		{name: "ffmpeg-master-latest-linuxarm64-gpl/bin/ffprobe", body: "ffprobe elf"},
-		{name: "ffmpeg-master-latest-linuxarm64-gpl/man/man1/ffmpeg.1", body: "man"},
+	f.ytdlp["yt-dlp_arm64.exe"] = []byte("arm yt-dlp")
+	f.ffmpeg["ffmpeg-master-latest-winarm64-gpl.zip"] = makeZip(t, []archiveEntry{
+		{name: "ffmpeg-master-latest-winarm64-gpl/bin/ffprobe.exe", body: `C:\Windows\System32\cmd.exe`, symlink: true},
+		{name: "ffmpeg-master-latest-winarm64-gpl/bin/ffmpeg.exe", body: "arm ffmpeg"},
+		{name: "ffmpeg-master-latest-winarm64-gpl/bin/ffprobe.exe", body: "arm ffprobe"},
+		{name: "ffmpeg-master-latest-winarm64-gpl/doc/ffmpeg.html", body: "docs"},
 	})
-	tools := f.tools(t, "linux", "arm64")
+	tools := f.tools(t, "arm64")
 
 	if err := tools.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	ytdlp, ffmpegDir, ok := tools.Paths()
-	if !ok || filepath.Base(ytdlp) != "yt-dlp" {
+	if !ok || readFile(t, ytdlp) != "arm yt-dlp" {
 		t.Fatalf("Paths() = %q, %q, %v", ytdlp, ffmpegDir, ok)
 	}
-	if readFile(t, filepath.Join(ffmpegDir, "ffprobe")) != "ffprobe elf" {
+	if readFile(t, filepath.Join(ffmpegDir, "ffprobe.exe")) != "arm ffprobe" {
 		t.Fatal("the symlink entry must be skipped in favour of the regular file")
 	}
-	if readFile(t, filepath.Join(ffmpegDir, "ffmpeg")) != "ffmpeg elf" {
+	if readFile(t, filepath.Join(ffmpegDir, "ffmpeg.exe")) != "arm ffmpeg" {
 		t.Fatal("wrong ffmpeg content")
+	}
+}
+
+func TestFFmpegChecksumMismatchRejected(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.ytdlp["yt-dlp.exe"] = []byte("yt-dlp")
+	f.ffmpeg["ffmpeg-master-latest-win64-gpl.zip"] = makeZip(t, []archiveEntry{
+		{name: "bin/ffmpeg.exe", body: "ffmpeg"},
+		{name: "bin/ffprobe.exe", body: "ffprobe"},
+	})
+	f.badSums["ffmpeg-master-latest-win64-gpl.zip"] = true
+	tools := f.tools(t, "amd64")
+
+	if err := tools.Ensure(context.Background()); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("want a checksum mismatch, got %v", err)
+	}
+	if fileExists(filepath.Join(tools.Dir, "ffmpeg", "ffmpeg.exe")) {
+		t.Fatal("an archive with the wrong checksum must not be unpacked")
+	}
+	if left := leftovers(t, tools.Dir); len(left) != 0 {
+		t.Fatalf("temp files left: %v", left)
 	}
 }
 
@@ -383,7 +354,7 @@ func TestArchiveMissingBinaryIsAnError(t *testing.T) {
 	if err := os.WriteFile(archive, makeZip(t, []archiveEntry{{name: "bin/ffmpeg.exe", body: "x"}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := extractTools(archive, "zip", dir, []string{"ffmpeg.exe", "ffprobe.exe"})
+	err := extractTools(archive, dir, []string{"ffmpeg.exe", "ffprobe.exe"})
 	if err == nil || !strings.Contains(err.Error(), "ffprobe.exe") {
 		t.Fatalf("want a missing ffprobe error, got %v", err)
 	}
@@ -393,7 +364,7 @@ func TestChecksumMismatchRejected(t *testing.T) {
 	f := newFakeGitHub(t)
 	f.ytdlp["yt-dlp.exe"] = []byte("tampered")
 	f.badSums["yt-dlp.exe"] = true
-	tools := f.tools(t, "windows", "amd64")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 
 	err := tools.Ensure(context.Background())
@@ -426,8 +397,8 @@ func TestChecksumMismatchRejected(t *testing.T) {
 
 func TestMissingChecksumEntryRejected(t *testing.T) {
 	f := newFakeGitHub(t)
-	f.ytdlp["yt-dlp_linux"] = []byte("only linux")
-	tools := f.tools(t, "windows", "amd64")
+	f.ytdlp["yt-dlp_arm64.exe"] = []byte("only arm64")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 	if err := tools.Ensure(context.Background()); err == nil || !strings.Contains(err.Error(), "yt-dlp.exe") {
 		t.Fatalf("want an error naming the missing asset, got %v", err)
@@ -436,8 +407,8 @@ func TestMissingChecksumEntryRejected(t *testing.T) {
 
 func TestStartRunsInBackgroundAndSkipsWhenPresent(t *testing.T) {
 	f := newFakeGitHub(t)
-	f.ytdlp["yt-dlp_linux"] = []byte("linux yt-dlp")
-	tools := f.tools(t, "linux", "amd64")
+	f.ytdlp["yt-dlp.exe"] = []byte("windows yt-dlp")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 
 	tools.Start()
@@ -447,7 +418,7 @@ func TestStartRunsInBackgroundAndSkipsWhenPresent(t *testing.T) {
 	calls := f.count("/repos/yt-dlp/yt-dlp/releases/latest")
 
 	// A second Tools over the same folder finds everything present and stays offline
-	again := f.tools(t, "linux", "amd64")
+	again := f.tools(t, "amd64")
 	again.Dir = tools.Dir
 	again.LookPath = onPath
 	again.Start()
@@ -459,37 +430,10 @@ func TestStartRunsInBackgroundAndSkipsWhenPresent(t *testing.T) {
 	}
 }
 
-func TestMacFFmpegViaRedirect(t *testing.T) {
-	f := newFakeGitHub(t)
-	f.ytdlp["yt-dlp_macos"] = []byte("mac yt-dlp")
-	f.ffmpeg["ffmpeg.zip"] = makeZip(t, []archiveEntry{{name: "ffmpeg", body: "mac ffmpeg"}})
-	f.ffmpeg["ffprobe.zip"] = makeZip(t, []archiveEntry{{name: "ffprobe", body: "mac ffprobe"}})
-	tools := f.tools(t, "darwin", "arm64")
-
-	if err := tools.Ensure(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	_, ffmpegDir, _ := tools.Paths()
-	if readFile(t, filepath.Join(ffmpegDir, "ffprobe")) != "mac ffprobe" {
-		t.Fatal("wrong ffprobe content")
-	}
-
-	// A bad checksum on the macOS build is rejected too
-	f2 := newFakeGitHub(t)
-	f2.ytdlp["yt-dlp_macos"] = []byte("mac yt-dlp")
-	f2.ffmpeg["ffmpeg.zip"] = f.ffmpeg["ffmpeg.zip"]
-	f2.ffmpeg["ffprobe.zip"] = f.ffmpeg["ffprobe.zip"]
-	f2.badSums["ffmpeg.zip"] = true
-	bad := f2.tools(t, "darwin", "arm64")
-	if err := bad.Ensure(context.Background()); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-		t.Fatalf("want a checksum mismatch, got %v", err)
-	}
-}
-
 func TestUpdateRedownloadsOnlyNewTag(t *testing.T) {
 	f := newFakeGitHub(t)
 	f.ytdlp["yt-dlp.exe"] = []byte("old")
-	tools := f.tools(t, "windows", "amd64")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 	if err := tools.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
@@ -521,7 +465,7 @@ func TestUpdateRedownloadsOnlyNewTag(t *testing.T) {
 
 func TestUpdateBeforeSetupIsAnError(t *testing.T) {
 	f := newFakeGitHub(t)
-	tools := f.tools(t, "windows", "amd64")
+	tools := f.tools(t, "amd64")
 	if _, err := tools.Update(context.Background()); err == nil {
 		t.Fatal("Update must refuse while yt-dlp is missing")
 	}
@@ -540,7 +484,7 @@ func TestStatusJSONShape(t *testing.T) {
 
 func TestStartSweepsLeftovers(t *testing.T) {
 	f := newFakeGitHub(t)
-	tools := f.tools(t, "linux", "amd64")
+	tools := f.tools(t, "amd64")
 	tools.LookPath = onPath
 	ffmpegDir := filepath.Join(tools.Dir, "ffmpeg")
 	if err := os.MkdirAll(ffmpegDir, 0o755); err != nil {
@@ -548,11 +492,11 @@ func TestStartSweepsLeftovers(t *testing.T) {
 	}
 	stale := []string{
 		filepath.Join(tools.Dir, ".download-123.tmp"),
-		filepath.Join(tools.Dir, "yt-dlp.old"),
+		filepath.Join(tools.Dir, "yt-dlp.exe.old"),
 		filepath.Join(ffmpegDir, ".extract-456.tmp"),
-		filepath.Join(ffmpegDir, "ffmpeg.old"),
+		filepath.Join(ffmpegDir, "ffmpeg.exe.old"),
 	}
-	kept := []string{tools.YtdlpPath(), filepath.Join(tools.Dir, "notes.tmp"), filepath.Join(ffmpegDir, "ffmpeg")}
+	kept := []string{tools.YtdlpPath(), filepath.Join(tools.Dir, "notes.tmp"), filepath.Join(ffmpegDir, "ffmpeg.exe")}
 	for _, path := range append(append([]string{}, stale...), kept...) {
 		if err := os.WriteFile(path, []byte("x"), 0o755); err != nil {
 			t.Fatal(err)

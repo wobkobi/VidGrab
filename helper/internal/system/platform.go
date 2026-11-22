@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 )
 
 const (
@@ -16,7 +14,7 @@ const (
 	HostName = "vidgrab"
 	// ExtensionID is the add-on allowed to talk to the native host.
 	ExtensionID = "yt-dl-firefox@local"
-	// AppName is the folder name of the install directory on Windows and macOS.
+	// AppName is the folder name of the install directory.
 	AppName = "VidGrab"
 )
 
@@ -26,12 +24,9 @@ func DataDir() string {
 	return filepath.Join(InstallDir(), "data")
 }
 
-// ExeName returns name with ".exe" appended on Windows.
+// ExeName returns name with ".exe" appended.
 func ExeName(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
+	return name + ".exe"
 }
 
 // FfmpegOnPath reports whether both ffmpeg and ffprobe resolve on PATH; yt-dlp needs the
@@ -55,32 +50,6 @@ func homeDir() string {
 		return home
 	}
 	return os.Getenv("HOME")
-}
-
-// parseUserDirs extracts XDG_DOWNLOAD_DIR from the content of a user-dirs.dirs file.
-//
-// The file is shell syntax written by xdg-user-dirs-update, e.g.
-// XDG_DOWNLOAD_DIR="$HOME/Downloads". Only the "$HOME/..." and absolute forms are valid
-// per the spec, so anything else returns "".
-func parseUserDirs(content, home string) string {
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		value, found := strings.CutPrefix(line, "XDG_DOWNLOAD_DIR=")
-		if !found {
-			continue
-		}
-		value = strings.Trim(value, `"`)
-		switch {
-		case value == "$HOME":
-			return home
-		case strings.HasPrefix(value, "$HOME/"):
-			return filepath.Join(home, filepath.FromSlash(value[len("$HOME/"):]))
-		case strings.HasPrefix(value, "/"):
-			return filepath.FromSlash(value)
-		}
-		return ""
-	}
-	return ""
 }
 
 // isDir reports whether path exists and is a directory.

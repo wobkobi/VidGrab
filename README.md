@@ -1,52 +1,35 @@
 # VidGrab
 
-A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels. It works through a small helper program on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg.
+YouTube videos, Shorts, playlists and channels, downloaded from Firefox on Windows in one click.
 
-**Version 2.7.1** · [Add-on on AMO](https://addons.mozilla.org/firefox/addon/vidgrab/) · [Helper downloads](https://github.com/wobkobi/VidGrab/releases/latest) · [Changelog](CHANGELOG.md)
+**Version 2.8.0** · [Add-on on AMO](https://addons.mozilla.org/firefox/addon/vidgrab/) · [Helper download](https://github.com/wobkobi/VidGrab/releases/latest) · [Changelog](CHANGELOG.md)
 
-## What it does
+> **Just want it working?** Install **[VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org, then download **[VidGrab-Setup.exe](https://github.com/wobkobi/VidGrab/releases/latest)** and double-click it once. [Setup](#setup) covers the SmartScreen warning.
+>
+> **Windows only.** The add-on needs its helper program, which runs on Windows 10 and 11.
 
-- Adds a download button to watch pages, Shorts, playlist headers and channel headers.
-- Downloads video (quality, codec, MP4 or MKV) or audio only (MP3 or M4A).
-- Cuts clips and shrinks videos to fit a size limit, such as Discord's 20 MB.
-- Runs a queue with parallel downloads, pause, resume, cancel and retry, shown in the toolbar popup.
-- Shows a desktop notification when a download finishes or fails.
-- Can use your Firefox cookies for age-restricted, members-only or private videos.
-- Keeps yt-dlp up to date and starts the helper automatically when Firefox needs it.
+- **One click**: a download button on watch pages, Shorts, the three-dot menu, playlists and channels.
+- **Video or audio**: pick the quality, codec and MP4 or MKV, or save MP3 or M4A.
+- **Clips and size limits**: cut out part of a video, or shrink it to fit Discord's 20 MB or any other limit.
+- **A proper queue**: parallel downloads with pause, resume, cancel and retry in the toolbar popup, and a notification when each one finishes.
+- **Signed-in videos**: can use your Firefox cookies for age-restricted, members-only or private videos.
+- **Looks after itself**: a small helper drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg, keeps yt-dlp up to date and starts whenever Firefox needs it.
 
 ## Requirements
 
 - Firefox 142 or newer.
-- Windows 10 or 11, macOS or Linux (see the table below).
+- Windows 10 or 11, on x64 (ARM PCs run it through x64 emulation).
 - An internet connection on first run, when the helper downloads yt-dlp (about 25 MB) and, if ffmpeg is not already installed, ffmpeg (about 100 MB).
-
-| System | Helper file | Tested |
-|---|---|---|
-| Windows (x64, or ARM through x64 emulation) | `vidgrab-windows-amd64.exe` | Yes |
-| macOS, Apple silicon | `vidgrab-macos-arm64` | Builds and passes unit tests only |
-| macOS, Intel | `vidgrab-macos-amd64` | Builds and passes unit tests only |
-| Linux (x64) | `vidgrab-linux-amd64` | Builds and passes unit tests only |
-
-Firefox installed as a Snap or Flatpak on Linux cannot start programs outside its sandbox, so the helper does not work there yet.
 
 ## Setup
 
-1. **Download the helper** for your system from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
-2. **Run it once.** No admin rights are needed.
-   - **Windows**: double-click it. The helper is not code-signed yet, so SmartScreen may say "Windows protected your PC"; click **More info > Run anyway**.
-   - **macOS**: in Terminal, run `chmod +x vidgrab-macos-arm64 && ./vidgrab-macos-arm64 install`. If macOS blocks it, allow it under System Settings > Privacy & Security, then run it again.
-   - **Linux**: run `chmod +x vidgrab-linux-amd64 && ./vidgrab-linux-amd64 install`.
+1. **Download the helper**, `VidGrab-Setup.exe`, from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
+2. **Double-click it once.** No admin rights are needed. The helper is not code-signed, so SmartScreen may say "Windows protected your PC"; click **More info > Run anyway**.
 3. **Install [VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org and restart Firefox. Firefox keeps the add-on up to date by itself.
 
 On first use the popup shows "Setting up yt-dlp and ffmpeg..." until those downloads finish.
 
-The helper copies itself to a per-user folder and registers itself with Firefox, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, run `vidgrab uninstall` from its install folder (or run the downloaded file with `uninstall`).
-
-| System | Installed to | Firefox registration |
-|---|---|---|
-| Windows | `%LOCALAPPDATA%\VidGrab\` | registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab` |
-| macOS | `~/Library/Application Support/VidGrab/` | `~/Library/Application Support/Mozilla/NativeMessagingHosts/vidgrab.json` |
-| Linux | `~/.local/share/vidgrab/` | `~/.mozilla/native-messaging-hosts/vidgrab.json` |
+The helper copies itself to `%LOCALAPPDATA%\VidGrab\` and registers itself with Firefox under the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab`, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, run `vidgrab uninstall` from its install folder (or run the downloaded file with `uninstall`).
 
 ## Usage
 
@@ -202,17 +185,12 @@ Mono sound stays mono at half the stereo rate, at least 32 kbps. A video with no
 
 - **AV1** always uses SVT-AV1: preset 5 up to 480p, 7 at 720p, 8 above.
 - **H.264 under 1500 kbps** always uses two-pass x264, because at low bitrates it looks far better than GPU encoders.
-- **H.264 at 1500 kbps and up** uses the first GPU encoder that passes a one-frame test:
-  - Windows: NVENC, then Quick Sync, then AMF.
-  - Linux: NVENC, Quick Sync, then VA-API (`/dev/dri/renderD128`, AMD and Intel).
-  - macOS: VideoToolbox.
-
-  Without one, or if the GPU encode fails, it uses two-pass x264 (and stops using that encoder until the helper restarts). Only NVENC and x264 have been tested on real hardware.
+- **H.264 at 1500 kbps and up** uses the first GPU encoder that passes a one-frame test: NVENC, then Quick Sync, then AMF. Without one, or if the GPU encode fails, it uses two-pass x264 (and stops using that encoder until the helper restarts). Only NVENC and x264 have been tested on real hardware.
 
 ## Where the helper gets its tools
 
 - **yt-dlp**: the standalone build from the latest [yt-dlp release](https://github.com/yt-dlp/yt-dlp/releases), checked against the release's `SHA2-256SUMS`.
-- **ffmpeg**: an `ffmpeg` and `ffprobe` already on `PATH` are used as they are. Otherwise the helper downloads the static GPL build from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds/releases) (Windows, Linux) or [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de) (macOS), checked against the published SHA-256 sums. Set `VIDGRAB_IGNORE_PATH_FFMPEG=1` to force the download even when ffmpeg is on `PATH`.
+- **ffmpeg**: an `ffmpeg` and `ffprobe` already on `PATH` are used as they are. Otherwise the helper downloads the static GPL build from [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds/releases), checked against the published SHA-256 sums. Set `VIDGRAB_IGNORE_PATH_FFMPEG=1` to force the download even when ffmpeg is on `PATH`.
 
 Both live in the install folder under `data\tools\`. The folder also holds the backend key (`data\token`), settings, update state and the log (`data\server.log`).
 
@@ -262,7 +240,7 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 
 ## Development
 
-Needs Go 1.22+, Node.js and, for the Windows helper, `windres` from [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (or `gcc-mingw-w64-x86-64` on Ubuntu) to embed its icon and version details.
+Needs Windows, Go 1.22+, Node.js and `windres` (from [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) or MSYS2's mingw-w64 binutils, on `PATH`) to embed the helper's icon and version details. The helper's tests only build on Windows.
 
 ```bat
 cd helper
@@ -275,7 +253,7 @@ npx web-ext lint -s extension
 npx web-ext run -s extension
 ```
 
-- `build-helper.mjs` cross-compiles all four helpers into `dist\` and stamps them with the add-on version; `--only windows-amd64` builds one. The Windows icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
+- `build-helper.mjs` builds `dist\VidGrab-Setup.exe` and stamps it with the add-on version. Its icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
 - Tests fake the network and yt-dlp. Set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test.
 - `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one.
 - `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
@@ -294,9 +272,9 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 Merging a new `version` in `extension/manifest.json` into main publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
-2. Builds the four helpers.
+2. Builds the helper.
 3. Submits the add-on to AMO as a listed version.
-4. Creates the `v<version>` GitHub release with the helpers, `updates.json` and notes made from `CHANGELOG.md`.
+4. Creates the `v<version>` GitHub release with the helper, `updates.json` and notes made from `CHANGELOG.md`.
 
 AMO reviews the version, and Firefox updates installed copies from AMO once it is approved. `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing.
 
@@ -312,8 +290,8 @@ helper/
   internal/auth/            Per-install key, /health proof and the port probe
   internal/core/            URL validation, request models, yt-dlp arguments, /info summary, progress parsing, size-limit fitting and ffmpeg re-encoding
   internal/server/          HTTP API, request guard, idle timeout, download queue (size-limited jobs in sized.go)
-  internal/system/          Install dirs, tool downloads, yt-dlp updates, native host, install/uninstall, OS specifics
-scripts/build-helper.mjs    Cross-compile the helper into dist/
+  internal/system/          Install dirs, tool downloads, yt-dlp updates, native host, install/uninstall, Windows specifics
+scripts/build-helper.mjs    Build the helper into dist/
 scripts/build-xpi.mjs       Package the add-on as an unsigned .xpi in dist/
 scripts/release-notes.mjs   Release notes from CHANGELOG.md, grouped by area
 extension/
@@ -332,8 +310,7 @@ extension/
 The add-on talks only to the helper on your own computer. The helper connects to:
 
 - the sites you ask it to download from, through yt-dlp;
-- GitHub, to download and update yt-dlp and, on Windows and Linux, ffmpeg;
-- ffmpeg.martin-riedl.de, to download ffmpeg on macOS when it isn't already installed.
+- GitHub, to download and update yt-dlp and, when it isn't already installed, ffmpeg.
 
 Neither sends analytics, usage data or personal information anywhere. Cookies are read from Firefox only when you turn that setting on, and are passed to yt-dlp for the download you started.
 

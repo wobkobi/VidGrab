@@ -31,34 +31,28 @@ func (f *fakeEncoderRunner) run(_ context.Context, argv []string) (string, strin
 
 func TestEncoderProbeOrderAndCache(t *testing.T) {
 	cases := []struct {
-		goos    string
 		working []string
 		want    string
 		probed  []string
 	}{
-		{"windows", []string{"h264_nvenc", "h264_qsv"}, "h264_nvenc", []string{"h264_nvenc"}},
-		{"windows", []string{"h264_qsv", "h264_amf"}, "h264_qsv", []string{"h264_nvenc", "h264_qsv"}},
-		{"windows", []string{"h264_amf"}, "h264_amf", []string{"h264_nvenc", "h264_qsv", "h264_amf"}},
-		{"windows", nil, EncoderX264, []string{"h264_nvenc", "h264_qsv", "h264_amf"}},
-		{"darwin", []string{"h264_videotoolbox"}, "h264_videotoolbox", []string{"h264_videotoolbox"}},
-		{"linux", nil, EncoderX264, []string{"h264_nvenc", "h264_qsv", "h264_vaapi"}},
-		{"linux", []string{"h264_vaapi"}, "h264_vaapi", []string{"h264_nvenc", "h264_qsv", "h264_vaapi"}},
-		{"freebsd", nil, EncoderX264, nil},
+		{[]string{"h264_nvenc", "h264_qsv"}, "h264_nvenc", []string{"h264_nvenc"}},
+		{[]string{"h264_qsv", "h264_amf"}, "h264_qsv", []string{"h264_nvenc", "h264_qsv"}},
+		{[]string{"h264_amf"}, "h264_amf", []string{"h264_nvenc", "h264_qsv", "h264_amf"}},
+		{nil, EncoderX264, []string{"h264_nvenc", "h264_qsv", "h264_amf"}},
 	}
 	for _, c := range cases {
 		fake := &fakeEncoderRunner{working: map[string]bool{}}
 		for _, name := range c.working {
 			fake.working[name] = true
 		}
-		probe := NewEncoderProbe(fake.run, c.goos)
-		probe.exists = func(path string) bool { return path == VaapiDevice }
+		probe := NewEncoderProbe(fake.run)
 		if got := probe.Pick(bg, "ffmpeg"); got != c.want {
-			t.Errorf("%s %v: picked %s, want %s", c.goos, c.working, got, c.want)
+			t.Errorf("%v: picked %s, want %s", c.working, got, c.want)
 		}
 		// The second call is served from the cache
 		probe.Pick(bg, "ffmpeg")
 		if !slices.Equal(fake.probed, c.probed) {
-			t.Errorf("%s %v: probed %v, want %v", c.goos, c.working, fake.probed, c.probed)
+			t.Errorf("%v: probed %v, want %v", c.working, fake.probed, c.probed)
 		}
 	}
 }
@@ -68,20 +62,20 @@ func TestEncoderProbeTestEncode(t *testing.T) {
 	probe := NewEncoderProbe(func(_ context.Context, a []string) (string, string, int, error) {
 		argv = a
 		return "", "", 0, nil
-	}, "darwin")
-	probe.Pick(bg, "/opt/ffmpeg")
+	})
+	probe.Pick(bg, `C:\tools\ffmpeg.exe`)
 	joined := strings.Join(argv, " ")
-	if argv[0] != "/opt/ffmpeg" || !strings.Contains(joined, "-f lavfi -i color=c=black:s=256x144:d=0.1 -frames:v 1") ||
+	if argv[0] != `C:\tools\ffmpeg.exe` || !strings.Contains(joined, "-f lavfi -i color=c=black:s=256x144:d=0.1 -frames:v 1") ||
 		!strings.HasSuffix(joined, "-f null -") {
 		t.Fatalf("probe argv %v", argv)
 	}
 	// A different binary is probed separately
 	argv = nil
-	probe.Pick(bg, "/opt/ffmpeg")
+	probe.Pick(bg, `C:\tools\ffmpeg.exe`)
 	if argv != nil {
 		t.Fatal("same binary probed twice")
 	}
-	probe.Pick(bg, "/other/ffmpeg")
+	probe.Pick(bg, `D:\other\ffmpeg.exe`)
 	if argv == nil {
 		t.Fatal("new binary not probed")
 	}
@@ -89,43 +83,13 @@ func TestEncoderProbeTestEncode(t *testing.T) {
 
 var bg = context.Background()
 
-func TestEncoderProbeSkipsVaapiWithoutDevice(t *testing.T) {
-	fake := &fakeEncoderRunner{working: map[string]bool{"h264_vaapi": true}}
-	probe := NewEncoderProbe(fake.run, "linux")
-	probe.exists = func(string) bool { return false }
-	if got := probe.Pick(bg, "ffmpeg"); got != EncoderX264 || slices.Contains(fake.probed, "h264_vaapi") {
-		t.Fatalf("picked %s after probing %v", got, fake.probed)
-	}
-}
-
-func TestEncoderProbeVaapiTestEncode(t *testing.T) {
-	var argv []string
-	probe := NewEncoderProbe(func(_ context.Context, a []string) (string, string, int, error) {
-		argv = a
-		if after(a, "-c:v") == "h264_vaapi" {
-			return "", "", 0, nil
-		}
-		return "", "", 1, nil
-	}, "linux")
-	probe.exists = func(string) bool { return true }
-	if got := probe.Pick(bg, "ffmpeg"); got != "h264_vaapi" {
-		t.Fatalf("picked %s", got)
-	}
-	// The device comes before the input and the upload after the test frame's input
-	device, input := slices.Index(argv, "-vaapi_device"), slices.Index(argv, "-i")
-	if device < 0 || device > input || after(argv, "-vaapi_device") != VaapiDevice ||
-		after(argv, "-vf") != "format=nv12,hwupload" || after(argv, "-rc_mode") != "CBR" || slices.Contains(argv, "-pix_fmt") {
-		t.Fatalf("vaapi probe argv %v", argv)
-	}
-}
-
 func TestEncoderProbeCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(bg)
 	fake := &fakeEncoderRunner{working: map[string]bool{"h264_nvenc": true}}
 	probe := NewEncoderProbe(func(c context.Context, a []string) (string, string, int, error) {
 		cancel()
 		return "", "", -1, c.Err()
-	}, "windows")
+	})
 	if got := probe.Pick(ctx, "ffmpeg"); got != EncoderX264 {
 		t.Fatalf("cancelled probe picked %s", got)
 	}
@@ -148,17 +112,14 @@ func TestEncoderProbeCancelled(t *testing.T) {
 func TestEncoderProbeTreatsStartErrorAsMissing(t *testing.T) {
 	probe := NewEncoderProbe(func(context.Context, []string) (string, string, int, error) {
 		return "", "", -1, context.DeadlineExceeded
-	}, "windows")
+	})
 	if got := probe.Pick(bg, "ffmpeg"); got != EncoderX264 {
 		t.Fatalf("picked %s", got)
 	}
 }
 
 func TestFfmpegPath(t *testing.T) {
-	exe := "ffmpeg"
-	if filepath.Separator == '\\' {
-		exe = "ffmpeg.exe"
-	}
+	const exe = "ffmpeg.exe"
 	if got := FfmpegPath(Tools{}); got != exe {
 		t.Errorf("PATH lookup = %q", got)
 	}
@@ -268,8 +229,6 @@ func TestEncodeJobPassesHardware(t *testing.T) {
 		{"h264_nvenc", "cbr", "yuv420p"},
 		{"h264_amf", "cbr", "yuv420p"},
 		{"h264_qsv", "", "nv12"},
-		{"h264_videotoolbox", "", "yuv420p"},
-		{"h264_vaapi", "", ""},
 	}
 	for _, c := range cases {
 		job := EncodeJob{Ffmpeg: "ffmpeg", Encoder: c.encoder, Source: "s.mp4", Output: "o.mp4",
@@ -284,29 +243,10 @@ func TestEncodeJobPassesHardware(t *testing.T) {
 			slices.Contains(args, "-pass") || slices.Contains(args, "-fpsmax") || after(args, "-ac") != "2" || last(args) != "o.mp4" {
 			t.Errorf("%s args %v", c.encoder, args)
 		}
-		vaapi := c.encoder == "h264_vaapi"
-		if (after(args, "-rc_mode") == "CBR") != vaapi || slices.Contains(args, "-vaapi_device") != vaapi ||
-			strings.HasSuffix(after(args, "-vf"), ",format=nv12,hwupload") != vaapi {
-			t.Errorf("%s vaapi options %v", c.encoder, args)
+		// No device options before the input, and the filter chain is the scale alone
+		if after(args, "-y") != "-i" || !strings.HasSuffix(after(args, "-vf"), "min(720,ih)/2)*2,-2)'") {
+			t.Errorf("%s input or filter %v", c.encoder, args)
 		}
-	}
-}
-
-func TestEncodeJobPassesVaapiOrder(t *testing.T) {
-	job := EncodeJob{Ffmpeg: "ffmpeg", Encoder: EncoderVaapi, Source: "s.mp4", Output: "o.mp4",
-		Plan: EncodePlan{VideoKbps: 800, AudioKbps: 96, Channels: 2, Height: 360, FPS: 30}}
-	args := job.Passes()[0]
-	device, input := slices.Index(args, "-vaapi_device"), slices.Index(args, "-i")
-	// The render node is a global option, so it must precede the input it decodes
-	if device < 0 || device > input || after(args, "-vaapi_device") != "/dev/dri/renderD128" {
-		t.Fatalf("device args %v", args)
-	}
-	// Scale on the CPU first, then convert and upload for the encoder
-	if vf := after(args, "-vf"); !strings.HasPrefix(vf, "scale=") || !strings.HasSuffix(vf, "min(360,ih)/2)*2,-2)',format=nv12,hwupload") {
-		t.Fatalf("filter %q", vf)
-	}
-	if after(args, "-c:v") != "h264_vaapi" || after(args, "-b:v") != "800k" || after(args, "-fpsmax") != "30" {
-		t.Fatalf("args %v", args)
 	}
 }
 
@@ -402,7 +342,7 @@ func TestRealFfmpegFit(t *testing.T) {
 		return out
 	}
 
-	picked := NewEncoderProbe(nil, "").Pick(context.Background(), ffmpeg)
+	picked := NewEncoderProbe(nil).Pick(context.Background(), ffmpeg)
 	t.Logf("encoder picked: %s", picked)
 	encoders := []string{picked}
 	if picked != EncoderX264 {

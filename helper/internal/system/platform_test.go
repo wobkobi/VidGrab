@@ -10,25 +10,6 @@ import (
 	"time"
 )
 
-func TestParseUserDirs(t *testing.T) {
-	home := filepath.FromSlash("/home/kiri")
-	content := "# written by xdg-user-dirs-update\nXDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_DOWNLOAD_DIR=\"$HOME/Tikiake Mai\"\n"
-	if got, want := parseUserDirs(content, home), filepath.Join(home, "Tikiake Mai"); got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-	if got := parseUserDirs(`XDG_DOWNLOAD_DIR="/mnt/data/dl"`, home); got != filepath.FromSlash("/mnt/data/dl") {
-		t.Fatalf("absolute form: got %q", got)
-	}
-	if got := parseUserDirs(`XDG_DOWNLOAD_DIR="$HOME"`, home); got != home {
-		t.Fatalf("bare $HOME: got %q", got)
-	}
-	for _, bad := range []string{"", "XDG_DESKTOP_DIR=\"$HOME/Desktop\"", `XDG_DOWNLOAD_DIR="relative/dir"`} {
-		if got := parseUserDirs(bad, home); got != "" {
-			t.Fatalf("%q: got %q, want empty", bad, got)
-		}
-	}
-}
-
 func TestDownloadsDirIsAbsolute(t *testing.T) {
 	if dir := DownloadsDir(); !filepath.IsAbs(dir) {
 		t.Fatalf("DownloadsDir() = %q, want an absolute path", dir)
