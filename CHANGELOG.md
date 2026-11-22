@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
+## [2.8.1] - 2026-11-23
+
+### Changed
+
+- **Helper:** `VidGrab-Setup.exe` is about 17% smaller (7.1 MB, down from 8.5 MB). It leaves out
+  unused HTTP/2 support, skips inlining, and stores its icon compressed.
+
 ## [2.8.0] - 2026-11-23
 
 ### Removed
