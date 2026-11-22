@@ -1,5 +1,5 @@
 // Build the VidGrab helper for Windows into dist/, with its icon and version details.
-// Usage: node scripts/build-helper.mjs
+// Usage: node scripts/build-helper.mjs [--version 2.8.0-dev.5]
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,8 +10,16 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const helper = join(root, "helper");
 const dist = join(root, "dist");
 
-// The helper reports the add-on's version so /health and the popup agree
-const version = JSON.parse(readFileSync(join(root, "extension", "manifest.json"), "utf8")).version;
+// The helper reports the add-on's version so /health and the popup agree. Dev builds pass
+// --version with a suffix such as "-dev.5"; the add-on treats any version that isn't plain
+// digits as current, so a dev helper never shows as out of date.
+const versionIndex = process.argv.indexOf("--version");
+const version =
+  versionIndex > 0
+    ? process.argv[versionIndex + 1]
+    : JSON.parse(readFileSync(join(root, "extension", "manifest.json"), "utf8")).version;
+const versionParts = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]*?(\d+))?$/.exec(version ?? "");
+if (!versionParts) throw new Error(`Version "${version}" isn't x.y.z or x.y.z-<label><number>`);
 
 // Windows on ARM runs this amd64 build under its x64 emulation, so it gets no build of its own
 const NAME = "VidGrab-Setup.exe";
@@ -44,8 +52,9 @@ function findWindres() {
  * @returns {string} Path to the .syso, to delete once the build is done.
  */
 function writeWindowsResources(name) {
-  const [major, minor, patch] = version.split(".").map(Number);
-  const numeric = `${major},${minor},${patch},0`;
+  // Windows file versions are four numbers; the fourth carries a dev build's number
+  const [, major, minor, patch, build = "0"] = versionParts;
+  const numeric = `${major},${minor},${patch},${build}`;
   // windres reads the icon path from inside the .rc, where backslashes are escapes
   const icon = join(helper, "winres", "icon.ico").replaceAll("\\", "/");
   const rc = `1 ICON "${icon}"
@@ -93,8 +102,13 @@ mkdirSync(dist, { recursive: true });
 const out = join(dist, NAME);
 const syso = writeWindowsResources(NAME);
 try {
-  // CGO off keeps the binary static, so it runs without a C runtime
-  execFileSync("go", ["build", "-trimpath", "-ldflags", `-s -w -X main.version=${version}`, "-o", out, "."], {
+  // CGO off keeps the binary static, so it runs without a C runtime. Two flags trim about 1.2 MB:
+  // nethttpomithttp2 drops net/http's HTTP/2 code (the local API and GitHub downloads work over
+  // HTTP/1.1), and -l turns off inlining, which costs nothing noticeable in a helper that mostly
+  // waits on yt-dlp and ffmpeg.
+  const args = ["build", "-trimpath", "-tags", "nethttpomithttp2", "-gcflags", "all=-l"];
+  args.push("-ldflags", `-s -w -X main.version=${version}`, "-o", out, ".");
+  execFileSync("go", args, {
     cwd: helper,
     stdio: "inherit",
     env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },

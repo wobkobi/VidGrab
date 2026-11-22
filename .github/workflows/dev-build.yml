@@ -1,0 +1,73 @@
+# Publishes the helper from every push to dev as a prerelease, replacing the previous one, so
+# changes can be tried before they ship. GitHub never counts a prerelease as the latest release,
+# so the download links in the README and the add-on keep pointing at the stable helper.
+name: Dev build
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# One at a time and never cancelled, so a run is never stopped between deleting the old
+# prerelease and publishing the new one
+concurrency:
+  group: dev-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Dev build
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+
+      # CI tested this commit on its pull request, so this only builds. A dev build previews
+      # the next release: the manifest's version while it is unreleased, otherwise the next
+      # patch, plus this workflow's run number (2.8.1-dev.12 after 2.8.0 shipped). That keeps
+      # it above the release it follows when versions are compared, which is also how GitHub
+      # orders the Releases page by tag.
+      - name: Build the helper
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(node -p "require('./extension/manifest.json').version")
+          if gh release view "v$base" > /dev/null 2>&1; then
+            base=$(node -p "const [a, b, c] = process.argv[1].split('.').map(Number); [a, b, c + 1].join('.')" "$base")
+          fi
+          version="$base-dev.$GITHUB_RUN_NUMBER"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          node scripts/build-helper.mjs --version "$version"
+
+      - name: Publish the dev prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          short="${GITHUB_SHA:0:7}"
+          {
+            echo "Built from [\`$short\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on \`dev\`."
+            echo
+            echo "A test build of changes that haven't shipped yet. For normal use, get the helper from the [latest release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest). Running this one installs over the installed helper the same way; run a stable one to go back."
+          } > "$RUNNER_TEMP/notes.md"
+          # Keep one dev build: delete every earlier dev prerelease before publishing this one
+          gh release list --limit 100 --json tagName,isPrerelease \
+            -q '.[] | select(.isPrerelease and (.tagName | test("-dev\\.[0-9]+$") or . == "dev-build")) | .tagName' |
+            while read -r tag; do gh release delete "$tag" --cleanup-tag --yes; done
+          gh release create "v$VERSION" dist/VidGrab-Setup.exe --prerelease --target "$GITHUB_SHA" \
+            --title "VidGrab $VERSION (dev build)" --notes-file "$RUNNER_TEMP/notes.md"

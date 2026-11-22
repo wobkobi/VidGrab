@@ -25,11 +25,11 @@ YouTube videos, Shorts, playlists and channels, downloaded from Firefox on Windo
 
 1. **Download the helper**, `VidGrab-Setup.exe`, from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
 2. **Double-click it once.** No admin rights are needed. The helper is not code-signed, so SmartScreen may say "Windows protected your PC"; click **More info > Run anyway**.
-3. **Install [VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org and restart Firefox. Firefox keeps the add-on up to date by itself.
+3. **Install [VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org. Firefox keeps the add-on up to date by itself.
 
-On first use the popup shows "Setting up yt-dlp and ffmpeg..." until those downloads finish.
+No Firefox restart is needed, whichever you install first: while the helper is missing, the add-on looks for it every few seconds. The helper starts fetching yt-dlp and ffmpeg as soon as it is installed, and the popup shows "Setting up yt-dlp and ffmpeg..." until those downloads finish.
 
-The helper copies itself to `%LOCALAPPDATA%\VidGrab\` and registers itself with Firefox under the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab`, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, run `vidgrab uninstall` from its install folder (or run the downloaded file with `uninstall`).
+The helper copies itself to `%LOCALAPPDATA%\VidGrab\`, registers itself with Firefox under the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab` and lists itself as **VidGrab helper** in Settings > Apps, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, uninstall **VidGrab helper** from Settings > Apps > Installed apps (or run `vidgrab uninstall`).
 
 ## Usage
 
@@ -124,7 +124,7 @@ Open them from the popup's gear button or `about:addons`.
 
 | Problem | Fix |
 |---|---|
-| "VidGrab helper not installed" | Download the helper from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest) (the popup and the page button both link there; a fresh install opens it by itself), run it once, then click **Check again** in the popup or restart Firefox |
+| "VidGrab helper not installed" | Download the helper from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest) (the popup and the page button both link there; a fresh install opens it by itself), run it once. The add-on notices it within a few seconds |
 | "Helper out of date" | Download the latest helper and run it once; it replaces the installed one |
 | "Setting up yt-dlp and ffmpeg" stays for a long time | The first run downloads up to about 125 MB. If it shows an error, check your connection and click **Check again**; details are in `data\server.log` |
 | "Another program is using the helper's port" | Something other than the helper answered on its port, so the add-on refuses to talk to it. Click **Check again**: the helper then moves to a new random port by itself |
@@ -253,7 +253,7 @@ npx web-ext lint -s extension
 npx web-ext run -s extension
 ```
 
-- `build-helper.mjs` builds `dist\VidGrab-Setup.exe` and stamps it with the add-on version. Its icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
+- `build-helper.mjs` builds `dist\VidGrab-Setup.exe` and stamps it with the add-on version, or with `--version 2.8.0-dev.5` for a dev build. Its icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
 - Tests fake the network and yt-dlp. Set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test.
 - `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one.
 - `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
@@ -269,7 +269,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it. `.github/workflows/release.yml` then:
+Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as a prerelease on the [Releases page](https://github.com/wobkobi/VidGrab/releases) (`.github/workflows/dev-build.yml`). It previews the next version, e.g. `2.8.1-dev.12` after 2.8.0, and replaces the previous dev build; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
 2. Builds the helper.
@@ -278,6 +278,7 @@ Merging a new `version` in `extension/manifest.json` into main publishes it. `.g
 
 AMO reviews the version, and Firefox updates installed copies from AMO once it is approved. `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing.
 
+- **Version**: a pull request into `dev` bumps the version against the latest release, not against whatever `dev` already has. The first change after a release bumps it (2.8.0 > 2.8.1); later ones before the next release only raise it when they need a bigger step (a feature turns 2.8.1 into 2.9.0, a fix after that leaves it at 2.9.0) and add their entries to that version's changelog section. Each release then gets exactly one version and none are skipped.
 - **Changelog**: every version needs a `## [x.y.z]` section in `CHANGELOG.md`, with each bullet naming its area (`- **Popup:** ...`). The release stops before submitting to AMO when it is missing. `node scripts/release-notes.mjs <version>` prints the notes it would publish.
 - **Helper compatibility**: users update the add-on and the helper separately, so the add-on has to keep working with any helper from `MIN_HELPER_VERSION` in `extension/shared/constants.js` on; the popup warns when the running helper is older. Before a change to the add-on, check that it only uses what that helper already has (its `/health`, `/jobs` and job fields), and raise `MIN_HELPER_VERSION` in the same change when it needs something newer.
 - **Secrets**: signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).

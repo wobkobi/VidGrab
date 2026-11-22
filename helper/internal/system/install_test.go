@@ -18,6 +18,9 @@ import (
 // testRegistryKey is a scratch HKCU key; tests never touch Firefox's real registration.
 const testRegistryKey = `Software\VidGrabTest\NativeMessagingHosts\vidgrab`
 
+// testUninstallKey is a scratch HKCU key standing in for the Settings > Apps entry.
+const testUninstallKey = `Software\VidGrabTest\Uninstall\VidGrab`
+
 type installFixture struct {
 	in        *Installer
 	self      string
@@ -41,6 +44,8 @@ func newInstallFixture(t *testing.T) *installFixture {
 		InstallDir:   installDir,
 		ManifestPath: defaultManifestPath(installDir),
 		RegistryKey:  testRegistryKey,
+		UninstallKey: testUninstallKey,
+		Version:      "9.9.9",
 		StopServer: func() (bool, error) {
 			f.stops++
 			return false, nil
@@ -91,7 +96,12 @@ func TestInstallCopiesAndRegisters(t *testing.T) {
 	if got := readTestRegistry(t); got != f.in.ManifestPath {
 		t.Fatalf("registry default value %q, want %q", got, f.in.ManifestPath)
 	}
-	if !strings.Contains(report.String(), "Restart Firefox") {
+	app := readTestUninstallEntry(t)
+	if app["DisplayName"] != "VidGrab helper" || app["DisplayVersion"] != "9.9.9" ||
+		app["UninstallString"] != `"`+target+`" uninstall` || app["InstallLocation"] != f.in.InstallDir {
+		t.Fatalf("Settings > Apps entry %v", app)
+	}
+	if !strings.Contains(report.String(), "Listed in Settings > Apps") {
 		t.Fatalf("report %q", report.String())
 	}
 
@@ -149,6 +159,9 @@ func TestUninstallRemovesEverything(t *testing.T) {
 	}
 	if testRegistryExists() {
 		t.Fatal("registry key still exists")
+	}
+	if testUninstallEntryExists() {
+		t.Fatal("Settings > Apps entry still exists")
 	}
 	if report.PendingRemoval || len(f.scheduled) != 0 {
 		t.Fatal("removal from outside the install dir must be immediate")
