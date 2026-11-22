@@ -269,7 +269,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as the [dev build](https://github.com/wobkobi/VidGrab/releases/tag/dev-build) prerelease (`.github/workflows/dev-build.yml`), versioned like `2.8.0-dev.12` and replaced each time; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
+Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as a prerelease on the [Releases page](https://github.com/wobkobi/VidGrab/releases) (`.github/workflows/dev-build.yml`). It previews the next version, e.g. `2.8.1-dev.12` after 2.8.0, and replaces the previous dev build; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
 2. Builds the helper.
@@ -278,6 +278,7 @@ Work goes into `dev` (the default branch) through pull requests, and `dev` goes 
 
 AMO reviews the version, and Firefox updates installed copies from AMO once it is approved. `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing.
 
+- **Version**: a pull request into `dev` bumps the version against the latest release, not against whatever `dev` already has. The first change after a release bumps it (2.8.0 > 2.8.1); later ones before the next release only raise it when they need a bigger step (a feature turns 2.8.1 into 2.9.0, a fix after that leaves it at 2.9.0) and add their entries to that version's changelog section. Each release then gets exactly one version and none are skipped.
 - **Changelog**: every version needs a `## [x.y.z]` section in `CHANGELOG.md`, with each bullet naming its area (`- **Popup:** ...`). The release stops before submitting to AMO when it is missing. `node scripts/release-notes.mjs <version>` prints the notes it would publish.
 - **Helper compatibility**: users update the add-on and the helper separately, so the add-on has to keep working with any helper from `MIN_HELPER_VERSION` in `extension/shared/constants.js` on; the popup warns when the running helper is older. Before a change to the add-on, check that it only uses what that helper already has (its `/health`, `/jobs` and job fields), and raise `MIN_HELPER_VERSION` in the same change when it needs something newer.
 - **Secrets**: signing needs the repository secrets `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (the API key and secret from addons.mozilla.org > Developer Hub > Manage API Keys).

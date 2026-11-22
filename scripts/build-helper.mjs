@@ -102,8 +102,13 @@ mkdirSync(dist, { recursive: true });
 const out = join(dist, NAME);
 const syso = writeWindowsResources(NAME);
 try {
-  // CGO off keeps the binary static, so it runs without a C runtime
-  execFileSync("go", ["build", "-trimpath", "-ldflags", `-s -w -X main.version=${version}`, "-o", out, "."], {
+  // CGO off keeps the binary static, so it runs without a C runtime. Two flags trim about 1.2 MB:
+  // nethttpomithttp2 drops net/http's HTTP/2 code (the local API and GitHub downloads work over
+  // HTTP/1.1), and -l turns off inlining, which costs nothing noticeable in a helper that mostly
+  // waits on yt-dlp and ffmpeg.
+  const args = ["build", "-trimpath", "-tags", "nethttpomithttp2", "-gcflags", "all=-l"];
+  args.push("-ldflags", `-s -w -X main.version=${version}`, "-o", out, ".");
+  execFileSync("go", args, {
     cwd: helper,
     stdio: "inherit",
     env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },
