@@ -1022,7 +1022,12 @@ func (s *Server) serve(ctx context.Context, listener net.Listener, idleTimeout t
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
 	if idleTimeout > 0 {
-		go watchIdle(ctx, idleTimeout, s.idleFor, s.queue.Busy, s.stop)
+		// First-run setup counts as busy: the installer starts the server before any add-on
+		// talks to it, and a slow connection can take longer than the timeout to fetch the tools
+		busy := func() bool {
+			return s.queue.Busy() || s.cfg.Tools.Status().State == system.ToolsInstalling
+		}
+		go watchIdle(ctx, idleTimeout, s.idleFor, busy, s.stop)
 	}
 	if background != nil {
 		go background(ctx)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -172,6 +173,27 @@ func startDetached(argv []string, log *os.File, dir string, flags uint32) error 
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// StartServer starts the installed helper at exe as a background server with the usual idle
+// timeout, on the port saved in its data folder. Install uses it so yt-dlp and ffmpeg
+// download while the user is still setting up the add-on.
+func StartServer(exe string) error {
+	data := filepath.Join(filepath.Dir(exe), "data")
+	argv := []string{exe, "serve", "--idle-timeout", strconv.Itoa(ServerIdleTimeout)}
+	return SpawnDetached(argv, filepath.Join(data, ServerLogFile))
+}
+
+var procGetConsoleProcessList = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleProcessList")
+
+// OwnsConsole reports whether this process is alone in its console window, which means
+// Windows opened the window for it: a double-click in Explorer or the Uninstall button in
+// Settings. Started from a terminal, the shell shares the console and this is false. The
+// window then closes as soon as the process exits, so callers pause before exiting.
+func OwnsConsole() bool {
+	var pids [2]uint32
+	n, _, _ := procGetConsoleProcessList.Call(uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
+	return n == 1
 }
 
 // asfwAny is ASFW_ANY: every process may set the foreground window.

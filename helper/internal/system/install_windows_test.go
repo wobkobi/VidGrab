@@ -33,12 +33,38 @@ func testRegistryExists() bool {
 	return true
 }
 
+// readTestUninstallEntry returns the string values of the scratch Settings > Apps entry.
+func readTestUninstallEntry(t *testing.T) map[string]string {
+	t.Helper()
+	k, err := registry.OpenKey(registry.CURRENT_USER, testUninstallKey, registry.QUERY_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	values := map[string]string{}
+	for _, name := range []string{"DisplayName", "DisplayVersion", "UninstallString", "InstallLocation"} {
+		values[name], _, _ = k.GetStringValue(name)
+	}
+	return values
+}
+
+func testUninstallEntryExists() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, testUninstallKey, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	k.Close()
+	return true
+}
+
 // cleanupTestRegistry deletes the scratch key tree (deepest key first; DeleteKey cannot
 // remove a key that still has subkeys).
 func cleanupTestRegistry() {
 	for _, key := range []string{
 		testRegistryKey,
 		`Software\VidGrabTest\NativeMessagingHosts`,
+		testUninstallKey,
+		`Software\VidGrabTest\Uninstall`,
 		`Software\VidGrabTest`,
 	} {
 		_ = registry.DeleteKey(registry.CURRENT_USER, key)

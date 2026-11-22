@@ -23,6 +23,9 @@ const (
 	replaceRetry    = 300 * time.Millisecond
 	replaceTries    = 15
 	hostDescription = "VidGrab download helper"
+	appDisplayName  = "VidGrab helper"
+	appPublisher    = "wobkobi"
+	appURL          = "https://github.com/wobkobi/VidGrab"
 )
 
 // Report describes what Install or Uninstall did. Lines is the human-readable summary.
@@ -54,6 +57,11 @@ type Installer struct {
 	// RegistryKey is the HKCU-relative key pointing Firefox at the manifest; empty skips the
 	// registry step.
 	RegistryKey string
+	// UninstallKey is the HKCU-relative key that lists the helper in Settings > Apps; empty
+	// skips it.
+	UninstallKey string
+	// Version is shown next to the Settings > Apps entry.
+	Version string
 	// StopServer stops a running helper server and reports whether one was running.
 	StopServer func() (bool, error)
 	// ScheduleRemoval deletes dir after this process exits, since a running executable cannot
@@ -68,6 +76,7 @@ func DefaultInstaller() *Installer {
 		InstallDir:   dir,
 		ManifestPath: defaultManifestPath(dir),
 		RegistryKey:  defaultRegistryKey(),
+		UninstallKey: defaultUninstallKey(),
 		StopServer: func() (bool, error) {
 			// An install from before ports were picked per install has no port file and
 			// listens on the old fixed one
@@ -82,9 +91,11 @@ func DefaultInstaller() *Installer {
 }
 
 // Install copies the helper at selfPath into the install directory and registers it with
-// Firefox, using the current user's real locations.
-func Install(selfPath string) (Report, error) {
-	return DefaultInstaller().Install(selfPath)
+// Firefox and in Settings > Apps as version, using the current user's real locations.
+func Install(selfPath, version string) (Report, error) {
+	in := DefaultInstaller()
+	in.Version = version
+	return in.Install(selfPath)
 }
 
 // Uninstall stops the server and removes the registration and install directory, using the
@@ -152,7 +163,16 @@ func (in *Installer) Install(selfPath string) (Report, error) {
 		}
 		report.addf(`Registered HKCU\%s`, in.RegistryKey)
 	}
-	report.addf("Restart Firefox (or reload the add-on) so it picks up the helper.")
+	// The Settings > Apps entry only offers a friendlier uninstall, so a failure is reported
+	// without failing an install that Firefox can already use
+	if in.UninstallKey != "" {
+		entry := AppEntry{Exe: target, Dir: in.InstallDir, Version: in.Version, SizeBytes: dirSize(in.InstallDir)}
+		if err := registerApp(in.UninstallKey, entry); err != nil {
+			report.addf("Could not add the helper to Settings > Apps: %v", err)
+		} else {
+			report.addf(`Listed in Settings > Apps (HKCU\%s)`, in.UninstallKey)
+		}
+	}
 	return report, nil
 }
 
@@ -174,6 +194,13 @@ func (in *Installer) Uninstall(selfPath string) (Report, error) {
 			report.addf(`Removed HKCU\%s`, in.RegistryKey)
 		default:
 			report.addf("Registry entry was not present")
+		}
+	}
+	if in.UninstallKey != "" {
+		if existed, err := unregisterHost(in.UninstallKey); err != nil {
+			errs = append(errs, fmt.Errorf("could not remove the Settings > Apps entry: %w", err))
+		} else if existed {
+			report.addf("Removed the Settings > Apps entry")
 		}
 	}
 	if err := os.Remove(in.ManifestPath); err == nil {
@@ -310,6 +337,22 @@ func copyExecutable(src, dst string) (err error) {
 		time.Sleep(replaceRetry)
 	}
 	return err
+}
+
+// dirSize returns the total size of the files under dir, 0 when it cannot be read. On an
+// upgrade it counts the downloaded yt-dlp and ffmpeg too.
+func dirSize(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // sameFile reports whether a and b are the same existing file.
