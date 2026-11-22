@@ -4,12 +4,13 @@ permissions:
   contents: read
 
 on:
+  # Feature branches merge into dev, and dev into main for a release
   pull_request:
-    branches: [main]
-  # Only main, so a branch with an open pull request is not checked twice: the
-  # pull_request event already covers every push to that branch.
+    branches: [dev, main]
+  # Only dev and main, so a branch with an open pull request is not checked
+  # twice: the pull_request event already covers every push to that branch.
   push:
-    branches: [main]
+    branches: [dev, main]
 
 # Supersede a run when its ref is pushed again. Grouping by ref keeps branches
 # from cancelling each other, and a cancelled run reports "cancelled" rather

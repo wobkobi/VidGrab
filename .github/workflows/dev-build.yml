@@ -1,0 +1,63 @@
+# Publishes the helper from every push to dev as the rolling "dev-build" prerelease, replaced
+# each time, so changes can be tried before they ship. GitHub never counts a prerelease as the
+# latest release, so the download links in the README and the add-on keep pointing at the
+# stable helper. The tag isn't "dev" because a tag named like the branch makes git refs
+# ambiguous.
+name: Dev build
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# One at a time and never cancelled, so a run is never stopped between deleting the old
+# prerelease and publishing the new one
+concurrency:
+  group: dev-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Dev build
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+
+      # CI tested this commit on its pull request, so this only builds. The version is the
+      # manifest's with this workflow's run number, e.g. 2.8.0-dev.12.
+      - name: Build the helper
+        id: build
+        run: |
+          version="$(node -p "require('./extension/manifest.json').version")-dev.$GITHUB_RUN_NUMBER"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          node scripts/build-helper.mjs --version "$version"
+
+      - name: Publish the dev prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          short="${GITHUB_SHA:0:7}"
+          {
+            echo "Built from [\`$short\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) on \`dev\`."
+            echo
+            echo "A test build of changes that haven't shipped yet. For normal use, get the helper from the [latest release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/latest). Running this one installs over the installed helper the same way; run a stable one to go back."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release delete dev-build --cleanup-tag --yes 2>/dev/null || true
+          gh release create dev-build dist/VidGrab-Setup.exe --prerelease --target "$GITHUB_SHA" \
+            --title "VidGrab $VERSION (dev build)" --notes-file "$RUNNER_TEMP/notes.md"

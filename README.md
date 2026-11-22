@@ -253,7 +253,7 @@ npx web-ext lint -s extension
 npx web-ext run -s extension
 ```
 
-- `build-helper.mjs` builds `dist\VidGrab-Setup.exe` and stamps it with the add-on version. Its icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
+- `build-helper.mjs` builds `dist\VidGrab-Setup.exe` and stamps it with the add-on version, or with `--version 2.8.0-dev.5` for a dev build. Its icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
 - Tests fake the network and yt-dlp. Set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test.
 - `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one.
 - `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
@@ -269,7 +269,7 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 
 ### Releases
 
-Merging a new `version` in `extension/manifest.json` into main publishes it. `.github/workflows/release.yml` then:
+Work goes into `dev` (the default branch) through pull requests, and `dev` goes into `main` when it is ready to ship. Both branches need a pull request with CI passing and can't be force-pushed or deleted. Every push to `dev` also publishes its helper as the [dev build](https://github.com/wobkobi/VidGrab/releases/tag/dev-build) prerelease (`.github/workflows/dev-build.yml`), versioned like `2.8.0-dev.12` and replaced each time; the latest-release links never point at it. Merging a new `version` in `extension/manifest.json` into `main` publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
 2. Builds the helper.
