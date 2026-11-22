@@ -25,11 +25,11 @@ YouTube videos, Shorts, playlists and channels, downloaded from Firefox on Windo
 
 1. **Download the helper**, `VidGrab-Setup.exe`, from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest).
 2. **Double-click it once.** No admin rights are needed. The helper is not code-signed, so SmartScreen may say "Windows protected your PC"; click **More info > Run anyway**.
-3. **Install [VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org and restart Firefox. Firefox keeps the add-on up to date by itself.
+3. **Install [VidGrab for YouTube](https://addons.mozilla.org/firefox/addon/vidgrab/)** from addons.mozilla.org. Firefox keeps the add-on up to date by itself.
 
-On first use the popup shows "Setting up yt-dlp and ffmpeg..." until those downloads finish.
+No Firefox restart is needed, whichever you install first: while the helper is missing, the add-on looks for it every few seconds. The helper starts fetching yt-dlp and ffmpeg as soon as it is installed, and the popup shows "Setting up yt-dlp and ffmpeg..." until those downloads finish.
 
-The helper copies itself to `%LOCALAPPDATA%\VidGrab\` and registers itself with Firefox under the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab`, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, run `vidgrab uninstall` from its install folder (or run the downloaded file with `uninstall`).
+The helper copies itself to `%LOCALAPPDATA%\VidGrab\`, registers itself with Firefox under the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\vidgrab` and lists itself as **VidGrab helper** in Settings > Apps, so you can delete the downloaded file afterwards. To upgrade, run a newer helper the same way. To remove it, uninstall **VidGrab helper** from Settings > Apps > Installed apps (or run `vidgrab uninstall`).
 
 ## Usage
 
@@ -124,7 +124,7 @@ Open them from the popup's gear button or `about:addons`.
 
 | Problem | Fix |
 |---|---|
-| "VidGrab helper not installed" | Download the helper from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest) (the popup and the page button both link there; a fresh install opens it by itself), run it once, then click **Check again** in the popup or restart Firefox |
+| "VidGrab helper not installed" | Download the helper from the [latest release](https://github.com/wobkobi/VidGrab/releases/latest) (the popup and the page button both link there; a fresh install opens it by itself), run it once. The add-on notices it within a few seconds |
 | "Helper out of date" | Download the latest helper and run it once; it replaces the installed one |
 | "Setting up yt-dlp and ffmpeg" stays for a long time | The first run downloads up to about 125 MB. If it shows an error, check your connection and click **Check again**; details are in `data\server.log` |
 | "Another program is using the helper's port" | Something other than the helper answered on its port, so the add-on refuses to talk to it. Click **Check again**: the helper then moves to a new random port by itself |

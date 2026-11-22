@@ -32,7 +32,58 @@ func registerHost(key, manifestPath string) error {
 	return k.SetStringValue("", manifestPath)
 }
 
+func defaultUninstallKey() string {
+	return `Software\Microsoft\Windows\CurrentVersion\Uninstall\` + AppName
+}
+
+// AppEntry is what Settings > Apps (and the older Programs and Features) shows for the
+// helper. Exe is the installed binary, which also supplies the icon and the uninstall
+// command.
+type AppEntry struct {
+	Exe       string
+	Dir       string
+	Version   string
+	SizeBytes int64
+}
+
+// registerApp writes the per-user uninstall entry under HKCU\key, which needs no admin rights
+// and lists the helper in Settings > Apps with a working Uninstall button. NoModify and
+// NoRepair hide the buttons the helper has nothing behind.
+func registerApp(key string, entry AppEntry) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, key, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	command := `"` + entry.Exe + `" uninstall`
+	strs := [][2]string{
+		{"DisplayName", appDisplayName},
+		{"DisplayVersion", entry.Version},
+		{"Publisher", appPublisher},
+		{"DisplayIcon", entry.Exe + ",0"},
+		{"InstallLocation", entry.Dir},
+		{"UninstallString", command},
+		{"QuietUninstallString", command + " --quiet"},
+		{"URLInfoAbout", appURL},
+		{"HelpLink", appURL},
+	}
+	for _, kv := range strs {
+		if err := k.SetStringValue(kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	// EstimatedSize is in KiB
+	dwords := map[string]uint32{"NoModify": 1, "NoRepair": 1, "EstimatedSize": uint32(entry.SizeBytes / 1024)}
+	for name, value := range dwords {
+		if err := k.SetDWordValue(name, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // unregisterHost deletes HKCU\key and reports whether it existed. The key has no subkeys.
+// The uninstall entry is removed the same way.
 func unregisterHost(key string) (bool, error) {
 	err := registry.DeleteKey(registry.CURRENT_USER, key)
 	if errors.Is(err, registry.ErrNotExist) {

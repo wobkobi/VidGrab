@@ -5,10 +5,22 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
-## [2.8.1] - 2026-11-23
+## [2.9.0] - 2026-11-23
+
+### Added
+
+- **Installing:** The helper lists itself as "VidGrab helper" in Settings > Apps, so it can be
+  uninstalled there like any other program instead of with `vidgrab uninstall`.
+- **Installing:** The helper starts fetching yt-dlp and ffmpeg as soon as it is installed, so they
+  are often ready by the time the add-on is set up. A slow first download no longer stops when the
+  helper has been idle for 5 minutes.
+- **Installing:** While the helper is missing, the add-on looks for it every few seconds, so
+  running the installer is picked up without restarting Firefox or clicking **Check again**.
 
 ### Changed
 
+- **Installing:** The install window shows short next steps instead of registry paths, and the
+  uninstall window started from Settings stays open until Enter is pressed.
 - **Helper:** `VidGrab-Setup.exe` is about 17% smaller (7.1 MB, down from 8.5 MB). It leaves out
   unused HTTP/2 support, skips inlining, and stores its icon compressed.
 

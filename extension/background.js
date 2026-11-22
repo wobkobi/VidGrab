@@ -7,6 +7,10 @@ const POLL_ACTIVE_MS = 1000;
 // Poll (and refresh /health) this often while the helper downloads yt-dlp and ffmpeg
 const POLL_SETUP_MS = 2000;
 const POLL_IDLE_MS = 30000;
+// While the helper isn't installed, look for it this often, so running the installer is picked
+// up without a Firefox restart or a click. A missing native host fails on a registry lookup,
+// so the check is cheap.
+const POLL_MISSING_MS = 3000;
 const HEALTH_REFRESH_MS = 30000;
 const START_RETRY_MS = 5000;
 const START_TIMEOUT_MS = 30000;
@@ -400,6 +404,7 @@ function schedulePoll(ms) {
   if (wait === undefined) {
     if (activeCount(state.jobs) > 0) wait = POLL_ACTIVE_MS;
     else if (toolsInstalling()) wait = POLL_SETUP_MS;
+    else if (state.backend.code === constants.HELPER_MISSING) wait = POLL_MISSING_MS;
     else wait = POLL_IDLE_MS;
   }
   pollTimer = setTimeout(poll, wait);
@@ -419,6 +424,10 @@ async function poll() {
   try {
     // Health first: job requests carry the token, so they only go to a verified backend.
     // During first-run setup it is refreshed on every poll to track the progress.
+    if (state.backend.code === constants.HELPER_MISSING && !ensurePromise) {
+      // Asking the native host also starts the backend once the helper has been installed
+      await requestToken();
+    }
     if (!state.backend.reachable || toolsInstalling() || Date.now() - lastHealthAt > HEALTH_REFRESH_MS) {
       await refreshHealth();
     }
