@@ -45,7 +45,9 @@ jobs:
       # minor bumps, so this is the signal that a bump still compiles for every
       # platform the release ships.
       - name: Build all helpers
-        run: node scripts/build-helper.mjs
+        run: |
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+          node scripts/build-helper.mjs
 
   extension:
     runs-on: ubuntu-latest

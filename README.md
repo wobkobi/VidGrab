@@ -2,7 +2,7 @@
 
 A Firefox add-on that downloads YouTube videos, Shorts, playlists and channels. It works through a small helper program on your computer, which drives [yt-dlp](https://github.com/yt-dlp/yt-dlp) and ffmpeg.
 
-**Version 2.7.0** · [Add-on on AMO](https://addons.mozilla.org/firefox/addon/vidgrab/) · [Helper downloads](https://github.com/wobkobi/VidGrab/releases/latest) · [Changelog](CHANGELOG.md)
+**Version 2.7.1** · [Add-on on AMO](https://addons.mozilla.org/firefox/addon/vidgrab/) · [Helper downloads](https://github.com/wobkobi/VidGrab/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## What it does
 
@@ -262,7 +262,7 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 
 ## Development
 
-Needs Go 1.22+ and Node.js.
+Needs Go 1.22+, Node.js and, for the Windows helper, `windres` from [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (or `gcc-mingw-w64-x86-64` on Ubuntu) to embed its icon and version details.
 
 ```bat
 cd helper
@@ -275,7 +275,7 @@ npx web-ext lint -s extension
 npx web-ext run -s extension
 ```
 
-- `build-helper.mjs` cross-compiles all four helpers into `dist\` and stamps them with the add-on version; `--only windows-amd64` builds one.
+- `build-helper.mjs` cross-compiles all four helpers into `dist\` and stamps them with the add-on version; `--only windows-amd64` builds one. The Windows icon is `helper/winres/icon.ico`, rendered from `extension/icons/icon.svg`.
 - Tests fake the network and yt-dlp. Set `VIDGRAB_TEST_YTDLP` to a yt-dlp binary to also run the real `/info` test.
 - `vidgrab serve --port N --data-dir DIR --downloads-dir DIR` runs a throwaway helper that doesn't touch the installed one.
 - `web-ext run` starts a throwaway Firefox profile with the add-on loaded and reloads it on change.
@@ -294,8 +294,8 @@ The add-on id `yt-dl-firefox@local` must stay the same, because the helper's Fir
 Merging a new `version` in `extension/manifest.json` into main publishes it. `.github/workflows/release.yml` then:
 
 1. Runs the tests.
-2. Submits the add-on to AMO as a listed version.
-3. Builds the four helpers.
+2. Builds the four helpers.
+3. Submits the add-on to AMO as a listed version.
 4. Creates the `v<version>` GitHub release with the helpers, `updates.json` and notes made from `CHANGELOG.md`.
 
 AMO reviews the version, and Firefox updates installed copies from AMO once it is approved. `updates.json` only moves installs from 2.4.x (which updated from GitHub) over to AMO. A push without a version bump releases nothing.
@@ -326,6 +326,16 @@ extension/
   icons/
   tests/                    node --test tests for shared/
 ```
+
+## Privacy
+
+The add-on talks only to the helper on your own computer. The helper connects to:
+
+- the sites you ask it to download from, through yt-dlp;
+- GitHub, to download and update yt-dlp and, on Windows and Linux, ffmpeg;
+- ffmpeg.martin-riedl.de, to download ffmpeg on macOS when it isn't already installed.
+
+Neither sends analytics, usage data or personal information anywhere. Cookies are read from Firefox only when you turn that setting on, and are passed to yt-dlp for the download you started.
 
 ## Licence
 
