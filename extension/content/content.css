@@ -62,7 +62,7 @@ html[dark] .yt-dl-toast {
 .yt-dl-label-text {
   position: relative;
   max-width: 220px;
-  /* Equal-width digits so "9%" > "10%" doesn't jiggle; watch.js holds the min-width during a job */
+  /* Equal-width digits so "9%" > "10%" doesn't jiggle; watch.js fixes the width (fixWidth) */
   font-variant-numeric: tabular-nums;
   text-align: center;
   overflow: hidden;
@@ -296,11 +296,27 @@ html[dark] .yt-dl-toast {
   padding: 0 16px 0 12px;
   margin: 0 0 0 8px;
   border-radius: 18px;
+  /* Not inherited: the header row can carry the dark text of a filled button like Subscribe.
+     lists.js overrides this inline when it copies a secondary button's colours. */
+  color: var(--yt-dl-text);
 }
 
 /* In YouTube's action row the copied slot class supplies the spacing */
 .yt-dl-list-box[data-yt-dl-slot="true"] .yt-dl-list-btn {
   margin: 0;
+}
+
+/* Too narrow to sit beside the actions (lists.js measures it): take a full row of its own */
+.yt-dl-list-box[data-yt-dl-wrapped="true"] {
+  flex: 1 0 100%;
+  width: 100%;
+  margin-left: 0;
+}
+
+.yt-dl-list-box[data-yt-dl-wrapped="true"] .yt-dl-list-btn {
+  width: 100%;
+  margin: 0;
+  justify-content: center;
 }
 
 /* Panel */
@@ -317,6 +333,8 @@ html[dark] .yt-dl-toast {
   width: 320px;
   max-width: calc(100vw - 16px);
   overflow-y: auto;
+  /* Scrolling past the end stays in the panel instead of scrolling the page under it */
+  overscroll-behavior: contain;
   padding: 16px;
   border-radius: 12px;
   background: var(--yt-dl-surface);
@@ -577,7 +595,8 @@ html[dark] .yt-dl-panel {
 .yt-dl-menu-item {
   display: flex;
   align-items: center;
-  gap: 16px;
+  /* 12px, not 16: lines the text up with YouTube's own items */
+  gap: 12px;
   min-height: 36px;
   padding: 0 36px 0 16px;
   font-size: 14px;

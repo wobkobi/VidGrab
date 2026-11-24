@@ -37,6 +37,10 @@ const (
 	// ExpandTimeout bounds listing a playlist or channel when queueing it, which can take far
 	// longer than the panel's /info call for a large channel.
 	ExpandTimeout = 120 * time.Second
+	// InfoListMax is how many entries /info lists for a playlist or channel; a longer list
+	// reports a null entry_count. Listing 201 entries of a 5000-video channel took about 5s,
+	// well inside core.InfoTimeout, while a full listing of one runs for minutes.
+	InfoListMax = 200
 	// SettingsFile is the settings file name inside the data directory.
 	SettingsFile = "settings.json"
 	// SetupError is the 503 message while yt-dlp and ffmpeg are still being installed.
@@ -73,9 +77,10 @@ type ToolsState interface {
 	Paths() (ytdlp string, ffmpegDir string, ok bool)
 }
 
-// InfoFetcher returns raw yt-dlp JSON for a canonical URL (core.FetchRawInfo's contract: a
+// InfoFetcher returns raw yt-dlp JSON for a canonical URL (core.FetchRawInfo's contract: items
+// limits a flat listing to a --playlist-items spec, "" lists every entry; a
 // *core.YtDlpTimeout when ctx's deadline passes, a *core.YtDlpError for other failures).
-type InfoFetcher func(ctx context.Context, url string, flat, cookies bool) (map[string]any, error)
+type InfoFetcher func(ctx context.Context, url string, flat bool, items string, cookies bool) (map[string]any, error)
 
 // Config holds everything a Server depends on; tests replace the functions with fakes. Nil
 // fields get the real implementations unless noted.
@@ -247,18 +252,23 @@ func New(cfg Config) *Server {
 		Tools:        s.coreTools,
 		Start:        cfg.StartProcess,
 		Kill:         cfg.KillProcess,
-		FetchInfo: func(canonical string) (map[string]any, error) {
+		// A complete listing /info already cached is reused, since selecting from it costs
+		// no yt-dlp run. Otherwise only the items in range are listed, and that partial
+		// listing stays out of the /info cache.
+		FetchInfo: func(canonical string, items []core.ItemRange) (map[string]any, error) {
 			parsed, err := core.Classify(canonical)
 			if err != nil {
 				return nil, err
 			}
+			// Reuse a cached listing only when it is complete and skipped no entry: the summary
+			// keeps well-formed entries only, so a gap would shift every later position against
+			// the ranged fetch, which numbers by yt-dlp's real list positions
+			if summary, ok := s.cachedInfo(parsed.Canonical); ok && summary.EntryCount != nil && *summary.EntryCount == len(summary.Entries) {
+				return listing(summary), nil
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), ExpandTimeout)
 			defer cancel()
-			summary, err := s.info(ctx, parsed)
-			if err != nil {
-				return nil, err
-			}
-			return listing(summary), nil
+			return s.cfg.FetchInfo(ctx, parsed.Canonical, true, core.FormatItems(items), s.settings.get().Cookies)
 		},
 		TitleLookup: s.cachedTitle,
 		// The /info cache keeps only summaries, without the per-format sizes a size-limited
@@ -266,7 +276,7 @@ func New(cfg Config) *Server {
 		VideoInfo: func(ctx context.Context, canonical string) (map[string]any, error) {
 			ctx, cancel := context.WithTimeout(ctx, core.InfoTimeout)
 			defer cancel()
-			return s.cfg.FetchInfo(ctx, canonical, false, s.settings.get().Cookies)
+			return s.cfg.FetchInfo(ctx, canonical, false, "", s.settings.get().Cookies)
 		},
 		Encoder: cfg.Encoder,
 	})
@@ -314,31 +324,55 @@ func (s *Server) coreTools() core.Tools {
 }
 
 // fetchWithTools is the default InfoFetcher: core.FetchRawInfo with the downloaded tools.
-func (s *Server) fetchWithTools(ctx context.Context, url string, flat, cookies bool) (map[string]any, error) {
+func (s *Server) fetchWithTools(ctx context.Context, url string, flat bool, items string, cookies bool) (map[string]any, error) {
 	ytdlp, ffmpegDir, ok := s.cfg.Tools.Paths()
 	if !ok {
 		return nil, &core.YtDlpError{Message: SetupError}
 	}
-	return core.FetchRawInfo(ctx, core.Tools{YtDlp: ytdlp, FfmpegDir: ffmpegDir}, url, flat, cookies, nil)
+	return core.FetchRawInfo(ctx, core.Tools{YtDlp: ytdlp, FfmpegDir: ffmpegDir}, url, flat, items, cookies, nil)
+}
+
+// cachedInfo returns the unexpired /info summary for a canonical URL under the current cookies
+// setting, without calling yt-dlp.
+func (s *Server) cachedInfo(canonical string) (core.Info, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	hit, ok := s.cache[cacheKey{canonical, s.settings.get().Cookies}]
+	if !ok || time.Since(hit.at) >= InfoCacheTTL {
+		return core.Info{}, false
+	}
+	return hit.summary, true
 }
 
 // info returns the /info summary for a URL, from the 10-minute cache when possible. Errors are
 // the fetcher's (*core.YtDlpError or *core.YtDlpTimeout).
+//
+// A playlist or channel is listed only as far as entry InfoListMax+1. When that extra entry
+// comes back the list is longer than InfoListMax: the summary keeps the first InfoListMax
+// entries and a nil EntryCount (null to the add-on, which then shows no count), and a nil
+// EntryCount is what keeps job creation from treating the cached listing as complete.
 func (s *Server) info(ctx context.Context, parsed core.ParsedUrl) (core.Info, error) {
+	if summary, ok := s.cachedInfo(parsed.Canonical); ok {
+		return summary, nil
+	}
 	cookies := s.settings.get().Cookies
 	key := cacheKey{parsed.Canonical, cookies}
-	now := time.Now()
-	s.cacheMu.Lock()
-	hit, ok := s.cache[key]
-	s.cacheMu.Unlock()
-	if ok && now.Sub(hit.at) < InfoCacheTTL {
-		return hit.summary, nil
+	list := parsed.Kind != core.KindVideo
+	items := ""
+	if list {
+		items = core.FormatItems([]core.ItemRange{{Start: 1, End: InfoListMax + 1}})
 	}
-	raw, err := s.cfg.FetchInfo(ctx, parsed.Canonical, parsed.Kind != core.KindVideo, cookies)
+	raw, err := s.cfg.FetchInfo(ctx, parsed.Canonical, list, items, cookies)
 	if err != nil {
 		return core.Info{}, err
 	}
 	summary := core.SummariseInfo(raw, parsed.Kind)
+	// Count the raw entries: the summary drops malformed ones, which still took a place
+	if entries, _ := raw["entries"].([]any); list && len(entries) > InfoListMax {
+		summary.EntryCount = nil
+		summary.Entries = summary.Entries[:min(len(summary.Entries), InfoListMax)]
+	}
+	now := time.Now()
 	s.cacheMu.Lock()
 	if len(s.cache) >= InfoCacheMax {
 		s.evictLocked(now)
@@ -792,11 +826,17 @@ func (s *Server) handleCreateJobs(r *http.Request) (int, any, error) {
 			return 0, nil, err
 		}
 	}
-	jobs, err := s.queue.Create(parsed.Canonical, body.Options, ranges)
+	jobs, next, err := s.queue.CreateCapped(parsed.Canonical, body.Options, ranges)
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusAccepted, map[string]any{"jobs": jobs}, nil
+	resp := map[string]any{"jobs": jobs}
+	// Only the first MaxGroupItems of a bigger selection were queued; the panel says so
+	if next > 0 {
+		resp["capped"] = MaxGroupItems
+		resp["next"] = next
+	}
+	return http.StatusAccepted, resp, nil
 }
 
 func (s *Server) handleListJobs(*http.Request) (int, any, error) {
@@ -811,7 +851,12 @@ func (s *Server) handleClearJobs(r *http.Request) (int, any, error) {
 	if !finished {
 		return 0, nil, newAPIError(http.StatusBadRequest, "Only finished=true is supported", "")
 	}
-	return http.StatusOK, map[string]any{"removed": s.queue.ClearFinished()}, nil
+	// failed=true also clears downloads with a failed job; without it they stay
+	failed, err := queryBool(r, "failed")
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, map[string]any{"removed": s.queue.ClearFinished(failed)}, nil
 }
 
 func (s *Server) handleJobAction(r *http.Request) (int, any, error) {

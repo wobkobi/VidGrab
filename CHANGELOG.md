@@ -5,6 +5,40 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each bullet starts with the area it changes
 (`- **Popup:** ...`); a release's notes on GitHub are its section regrouped by area.
 
+## [2.10.0] - 2026-11-24
+
+### Added
+
+- **Playlists and channels:** A playlist or channel download goes into its own folder, named after
+  the list, and shows in the popup as one card with overall progress, a count of done, failed and
+  cancelled videos, and Pause all, Resume all, Cancel all and Retry for the whole list.
+- **Playlists and channels:** "All" on a channel with more than 1000 videos queues the newest 1000
+  and says where the rest start, instead of refusing.
+- **Popup:** Private and members-only errors say that turning on Use Firefox cookies helps when
+  the signed-in account has access.
+
+### Changed
+
+- **Playlists and channels:** The Download playlist and Download channel buttons match YouTube's
+  own buttons, sit beside them when there is room and take their own row when there isn't.
+- **Playlists and channels:** Choosing a range on a big channel lists only the videos in that
+  range, so it starts in seconds instead of timing out. The options panel lists up to 200 videos.
+- **Popup:** Clear finished keeps cards with a failed video, then becomes Clear failed to remove
+  them. Cards are cleared whole, never part of a playlist.
+- **Watch page:** The Download button keeps one width through a whole download, so YouTube's
+  like and share buttons no longer shift. Labels are shorter: Finishing, Retry, Stopping.
+- **Watch page:** Download after a cancel restarts the cancelled download instead of adding a
+  second one.
+
+### Fixed
+
+- **Options panel:** It opens in its final spot instead of jumping after the formats load, follows
+  its button when the page scrolls or YouTube moves the layout, and no longer scrolls the page
+  behind it.
+- **Popup:** Progress bars fill at their real percentage, and a finished list keeps its full count
+  after Cancel all or when other downloads finish.
+- **Menus:** The three-dot menu no longer offers a single-video download on Mix and playlist cards.
+
 ## [2.9.0] - 2026-11-23
 
 ### Added

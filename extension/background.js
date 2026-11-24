@@ -565,7 +565,13 @@ const HANDLERS = {
     const res = await withBackend(() => api.createJobs(message.url, message.options, items));
     if (!res.ok) return res;
     poll();
-    return {ok: true, data: {jobs: (res.data && res.data.jobs) || []}};
+    const data = {jobs: (res.data && res.data.jobs) || []};
+    // Set when a list had more videos than one download may queue; only the first were queued
+    if (res.data && Number.isInteger(res.data.capped)) {
+      data.capped = res.data.capped;
+      if (Number.isInteger(res.data.next)) data.next = res.data.next;
+    }
+    return {ok: true, data};
   },
 
   async jobAction(message) {
@@ -578,8 +584,8 @@ const HANDLERS = {
     return {ok: true, data: {job: res.data && res.data.job}};
   },
 
-  async clearFinished() {
-    const res = await withBackend(() => api.clearFinished());
+  async clearFinished(message) {
+    const res = await withBackend(() => api.clearFinished(message.failed === true));
     if (!res.ok) return res;
     poll();
     return {ok: true, data: {removed: (res.data && res.data.removed) || 0}};

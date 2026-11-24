@@ -15,6 +15,11 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
   // Longer one-off messages show as "Error" with the text in the tooltip, so the button
   // never cuts a sentence off ("Helper not installed" still fits)
   const FLASH_LABEL_MAX = 24;
+
+  // Every label the download flow shows on the full-size button (busy labels, then job
+  // states); the button keeps the widest one's width throughout. Keep them about as short as
+  // "Download", or the idle button widens too.
+  const FIXED_LABELS = ["Download", "Starting...", "Stopping", "Retrying", "Resuming", "Queued", "Preparing", "100%", "Finishing", "Paused", "Done", "Retry", "Error"];
   const ACTIVE = new Set(YTDL.constants.ACTIVE_STATUSES);
 
   // Fallbacks tried after the configurable selector, newest layout first
@@ -68,9 +73,23 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     let doneUntil = 0;
     let lastJobId = null;
     let lastStatus = null;
-    // Label min-width held for the current job, starting from the idle "Download" width, so it
-    // only grows ("Download" > "45%" > "Converting 45%")
-    let heldWidth = 0;
+    // Fixed label width, the widest of FIXED_LABELS in the label's font; 0 until measured
+    let fixedWidth = 0;
+    let fixedFont = "";
+    let measureCanvas = null;
+    let fixHold = false;
+    // Fires when the label is first laid out, however long YouTube takes to attach the row,
+    // and when its size changes. Setting the same min-width again does not resize it, so this
+    // settles after one round.
+    const labelObserver = compact ? null : new ResizeObserver(() => fixWidth(fixHold));
+    if (labelObserver) labelObserver.observe(labelNode);
+    // The label's font (Roboto) can finish loading after the first measure; measure again
+    const remeasure = () => {
+      fixedFont = "";
+      fixWidth(fixHold);
+    };
+    document.fonts.ready.then(remeasure);
+    document.fonts.addEventListener("loadingdone", remeasure);
     let startingUntil = 0;
     let startingTimer = null;
 
@@ -106,11 +125,12 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
 
     /**
      * Work out the label, tone, progress and click action from the current state.
-     * @returns {{text: string, tone: string, progress: number|null, action: string, title: string}} View model.
+     * @returns {{text: string, tone: string, progress: number|null, action: string, title: string, free?: boolean}} View model; free labels are outside the download flow and may widen the button.
      */
     function view() {
       const job = videoId ? content.latestJobFor(videoId) : null;
-      if (busyText) return { text: busyText, tone: "busy", progress: null, action: "none", title: busyText };
+      // "Starting backend..." comes before the download flow and is too long for its width
+      if (busyText) return { text: busyText, tone: "busy", progress: null, action: "none", title: busyText, free: !FIXED_LABELS.includes(busyText) };
       // The job was created but the next job poll hasn't delivered it yet: keep the busy label
       // instead of flashing back to "Download" for a moment
       if (Date.now() < startingUntil) {
@@ -124,18 +144,18 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       if (content.backendDown() && !(job && ACTIVE.has(job.status))) {
         if (content.helperMissing()) {
           const title = `${content.helperMissingText(content.backend)} Click to open the download page.`;
-          return { text: "Helper not installed", tone: "offline", progress: null, action: "get-helper", title };
+          return { text: "Helper not installed", tone: "offline", progress: null, action: "get-helper", title, free: true };
         }
         const title = (content.backend && content.backend.error) || "Click to start the backend and download";
         return { text: "Backend not running", tone: "offline", progress: null, action: "download", title };
       }
       if (content.backendStarting() && !(job && ACTIVE.has(job.status))) {
-        return { text: "Starting backend...", tone: "busy", progress: null, action: "download", title: "Click to download once the backend is up" };
+        return { text: "Starting backend...", tone: "busy", progress: null, action: "download", title: "Click to download once the backend is up", free: true };
       }
       const setup = content.setupStatus();
       if (setup && !(job && ACTIVE.has(job.status))) {
         const text = setup.state === "error" ? "Setup failed" : "Setting up...";
-        return { text, tone: setup.state === "error" ? "error" : "busy", progress: null, action: "download", title: setup.text };
+        return { text, tone: setup.state === "error" ? "error" : "busy", progress: null, action: "download", title: setup.text, free: true };
       }
       if (job) {
         const name = job.title || "this video";
@@ -150,18 +170,26 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
           case "processing":
             if (YTDL.format.isConverting(job)) {
               const pct = Math.max(0, Math.min(100, Number(job.percent) || 0));
-              return { text: YTDL.format.convertingLabel(job), tone: "active", progress: pct, action: "none", title: `Converting ${name} to fit the max size` };
+              // Percentage only: "Converting 45%" would widen the button; the tooltip and
+              // popup say it is converting
+              return { text: YTDL.format.percent(pct), tone: "active", progress: pct, action: "none", title: `Converting ${name} to fit the max size` };
             }
-            return { text: "Processing", tone: "active", progress: 100, action: "none", title: `Processing ${name}` };
+            return { text: "Finishing", tone: "active", progress: 100, action: "none", title: `Finishing ${name} (merging and tidying up)` };
           case "paused":
             return { text: "Paused", tone: "paused", progress: Number(job.percent) || 0, action: "resume", title: "Click to resume" };
           // yt-dlp errors run long ("unable to download video data: HTTP Error 403: ..."), so
           // the button says what to do and the tooltip and popup carry the message
           case "error":
-            return { text: "Failed - retry", tone: "error", progress: null, action: "retry", title: `${job.error || "Download failed"} - click to retry` };
+            return { text: "Retry", tone: "error", progress: null, action: "retry", title: `${job.error || "Download failed"} - click to retry` };
           case "complete":
             if (Date.now() < doneUntil) return { text: "Done", tone: "done", progress: null, action: "download", title: "Downloaded - click to download again" };
             break;
+          // Looks idle, but restarts the cancelled job rather than queuing a second one, so one
+          // video keeps one row in the popup. The arrow still starts fresh.
+          // A cancelled playlist item is left to its card, so it never lands in that folder.
+          case "cancelled":
+            if (job.group_id) break;
+            return { text: "Download", tone: "idle", progress: null, action: "retry", title: "Download (restarts the cancelled download with its options)" };
           default:
             break;
         }
@@ -195,19 +223,32 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     }
 
     /**
-     * Hold the label at its widest during a job so the button does not resize on every
-     * progress tick; release it once the job is over.
-     * @param {boolean} hold - Whether a job is in progress.
+     * Keep the label one width through a whole download, so the button never pushes YouTube's
+     * right-aligned row about. The width fits the widest of FIXED_LABELS, measured once per
+     * font with a canvas (the label's tabular digits only matter for "100%", far narrower).
+     * Every label of the download flow is at least that wide; in a held state it is also at
+     * most that wide, so a longer flash message ends in an ellipsis, its full text in the
+     * tooltip. Offline and setup labels ("Backend not running") are left free to grow.
+     * @param {boolean} hold - Whether the label is part of the download flow.
      */
-    function holdWidth(hold) {
+    function fixWidth(hold) {
       if (compact) return;
-      if (!hold) {
-        heldWidth = 0;
-        labelNode.style.removeProperty("min-width");
-        return;
+      fixHold = hold;
+      // The first render runs before the button is on the page, with no font to measure in;
+      // labelObserver calls this again once it is laid out
+      if (!labelNode.isConnected) return;
+      const style = getComputedStyle(labelNode);
+      const font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      if (font !== fixedFont) {
+        measureCanvas = measureCanvas || document.createElement("canvas");
+        const ctx = measureCanvas.getContext("2d");
+        ctx.font = font;
+        fixedWidth = Math.ceil(Math.max(...FIXED_LABELS.map((text) => ctx.measureText(text).width)));
+        fixedFont = font;
       }
-      heldWidth = Math.max(heldWidth, Math.ceil(labelNode.getBoundingClientRect().width));
-      labelNode.style.minWidth = `${heldWidth}px`;
+      labelNode.style.minWidth = `${fixedWidth}px`;
+      if (hold) labelNode.style.maxWidth = `${fixedWidth}px`;
+      else labelNode.style.removeProperty("max-width");
     }
 
     /**
@@ -216,13 +257,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     function render() {
       const v = view();
       currentAction = v.action;
-      // Entering a held state: start from the width the label has now ("Download"), so a
-      // short label like "5%" never makes the button narrower than it was before the click
       const job = videoId ? content.latestJobFor(videoId) : null;
       const active = Boolean(job && ACTIVE.has(job.status));
-      // "Done" is held too, or the short label would shrink the button for its 3 seconds
-      const hold = active || v.tone === "busy" || v.tone === "done";
-      if (hold && !heldWidth && !compact) heldWidth = Math.ceil(labelNode.getBoundingClientRect().width);
       labelNode.textContent = v.text;
       root.dataset.tone = v.tone;
       main.title = v.title;
@@ -231,7 +267,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       if (v.progress === null) root.style.removeProperty("--yt-dl-progress");
       else root.style.setProperty("--yt-dl-progress", `${v.progress}%`);
       setArrowMode(active ? job.id : null);
-      holdWidth(hold);
+      fixWidth(v.tone !== "offline" && !v.free);
     }
 
     /**
@@ -266,11 +302,11 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       }
       const job = content.latestJobFor(videoId);
       if (currentAction === "retry" && job) {
-        await withBusy("Retrying...", () => content.send({ type: "jobAction", id: job.id, action: "retry" }));
+        await withBusy("Retrying", () => content.send({ type: "jobAction", id: job.id, action: "retry" }));
         return;
       }
       if (currentAction === "resume" && job) {
-        await withBusy("Resuming...", () => content.send({ type: "jobAction", id: job.id, action: "resume" }));
+        await withBusy("Resuming", () => content.send({ type: "jobAction", id: job.id, action: "resume" }));
         return;
       }
       if (currentAction !== "download") return;
@@ -305,7 +341,7 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
       if (cancelJobId) {
         if (busyText) return;
         const id = cancelJobId;
-        await withBusy("Cancelling...", () => content.send({ type: "jobAction", id, action: "cancel" }));
+        await withBusy("Stopping", () => content.send({ type: "jobAction", id, action: "cancel" }));
         return;
       }
       if (!url) return;
@@ -344,6 +380,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
        */
       destroy() {
         offJobs();
+        document.fonts.removeEventListener("loadingdone", remeasure);
+        if (labelObserver) labelObserver.disconnect();
         clearTimeout(flashTimer);
         clearTimeout(doneTimer);
         clearTimeout(startingTimer);

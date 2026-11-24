@@ -6,6 +6,8 @@
   --muted: #6b6b73;
   --accent: #d92b2b;
   --accent-text: #ffffff;
+  /* In-progress colour for playlist and channel cards, where red would read as failed */
+  --active: #2f6fdb;
   --ok: #1f9d55;
   --warn: #c27c0e;
   --bad: #d92b2b;
@@ -22,6 +24,7 @@
     --muted: #a8a7b0;
     --accent: #ff5a5a;
     --accent-text: #1c1b22;
+    --active: #6ea4ff;
     --ok: #4fd18b;
     --warn: #f0b34a;
     --bad: #ff6b6b;
@@ -173,34 +176,142 @@ body {
   text-align: center;
 }
 
+/* Playlist and channel downloads: a card with a folder header, overall progress and the
+   videos indented underneath, so a list reads as one download into one folder. --state
+   colours the edge, folder icon and overall bar together. */
 .group {
+  /* Blue, not the red accent, while downloading: red on a list card looked like a failure.
+     Redefining --accent also turns the rows' progress bars inside the card blue. */
+  --accent: var(--active);
+  --state: var(--active);
   margin: 8px 0;
+  background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--state);
   border-radius: 8px;
-  padding: 6px 8px 2px;
+  padding: 8px 10px 4px 8px;
+}
+
+.group[data-status="complete"] {
+  --state: var(--ok);
+}
+
+.group[data-status="paused"] {
+  --state: var(--warn);
+}
+
+.group[data-status="error"] {
+  --state: var(--bad);
+}
+
+.group[data-status="cancelled"] {
+  --state: var(--muted);
 }
 
 .group-head {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-weight: 600;
+  align-items: center;
+  gap: 6px;
 }
 
-.group-head .group-title {
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--state);
+  cursor: pointer;
+}
+
+.group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.group-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.group.collapsed .group-chevron {
+  transform: rotate(-90deg);
+}
+
+.group-icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.group-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.group-title {
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.group-head .group-count {
-  font-weight: 400;
-  flex: none;
+/* Wraps rather than cutting off the counts, which matter more than the format tag */
+.group-sub {
+  overflow-wrap: anywhere;
+}
+
+.group-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+
+.group-bar {
+  flex: 1;
+  height: 4px;
+  margin: 0;
+}
+
+/* .group raises this over the .bar > span rule further down, which would paint it --accent */
+.group .group-bar > span {
+  background: var(--state);
+}
+
+.group-list {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--border);
 }
 
 .group .job {
+  padding: 6px 0;
   border-bottom: none;
   border-top: 1px solid var(--border);
+}
+
+.group .job-title {
+  font-size: 12.5px;
+}
+
+.group .job .bar {
+  height: 3px;
+}
+
+/* The header already shows what every row would repeat */
+.group.same-tag .job .tag,
+.group.same-channel .job .job-channel {
+  display: none;
 }
 
 .job {
@@ -268,7 +379,8 @@ a.job-title[href]:hover {
   height: 100%;
   width: 0;
   background: var(--accent);
-  transition: width 0.4s ease;
+  /* No width transition: bars update once a second anyway, and an animated bar lagged its
+     own percentage (or stayed empty where the popup was not being painted) */
 }
 
 .job[data-status="complete"] .bar > span {
@@ -302,6 +414,11 @@ a.job-title[href]:hover {
   color: var(--bad);
   white-space: normal;
   overflow-wrap: anywhere;
+  /* An error not reworded by shortError can run long; the full text is on hover */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 .actions {

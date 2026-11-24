@@ -14,6 +14,12 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
 
   const VIEWPORT_MARGIN = 8;
   const ANCHOR_GAP = 6;
+  // Height the panel may still gain once /info loads (status line swapped for a title that
+  // can wrap to three lines, plus the list's video count), kept free when picking a side
+  const GROW_ROOM = 80;
+  // Below this much room on its side the panel stops shrinking to fit and overlaps the button;
+  // at 120px the header and a couple of fields still show, with the rest scrolling inside
+  const MIN_ROOM = 120;
   const CLOSE_AFTER_SUCCESS_MS = 1200;
   const OPTION_KEYS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate", "max_size_mb"];
   const SIZE_LIMITS = LIMITS.max_size_mb;
@@ -23,6 +29,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
 
   let state = null;
   let idCounter = 0;
+  let resizeObserver = null;
+  let trackFrame = 0;
 
   /**
    * Normalise an /info codec string (e.g. "avc1.640028") to a codec preference value.
@@ -485,6 +493,17 @@ ${detail}`);
   }
 
   /**
+   * Title to show for the open panel. A channel tab listing is titled "Name - Videos" (or
+   * Shorts, Live); drop the suffix as the helper does for the folder and popup card.
+   * @param {string} title - Title from /info.
+   * @returns {string} The title to show.
+   */
+  function listTitle(title) {
+    if (state.mode !== "list") return title;
+    return title.replace(/[\s\u00a0]+-[\s\u00a0]+(Videos|Shorts|Live)$/, "") || title;
+  }
+
+  /**
    * Fetch /info and backend health for the open panel, ignoring results from an older open.
    */
   async function loadInfo() {
@@ -506,7 +525,7 @@ ${detail}`);
 
     if (infoRes.ok) {
       state.info = infoRes.data;
-      if (infoRes.data && infoRes.data.title) state.ui.title.textContent = infoRes.data.title;
+      if (infoRes.data && infoRes.data.title) state.ui.title.textContent = listTitle(infoRes.data.title);
       setStatus("");
     } else if (infoRes.code === HELPER_MISSING) {
       setStatus(content.helperMissingText(infoRes), "error");
@@ -592,10 +611,18 @@ ${detail}`);
     }
     // Stay busy until the panel closes so a second click or Enter cannot queue it again
     const count = res.data && Array.isArray(res.data.jobs) ? res.data.jobs.length : 1;
-    setStatus(count === 1 ? "Added to the queue" : `Added ${count} downloads to the queue`, "success");
+    const capped = res.data && res.data.capped;
+    if (capped) {
+      // next is where the left-out videos start; it is capped + 1 only for a selection from 1
+      const next = Number.isInteger(res.data.next) ? res.data.next : capped + 1;
+      setStatus(`Added the first ${capped} videos, the most one download can queue. Download the rest as a range starting at ${next}.`, "success");
+    } else {
+      setStatus(count === 1 ? "Added to the queue" : `Added ${count} downloads to the queue`, "success");
+    }
+    // A capped list leaves longer to read the note
     setTimeout(() => {
       if (state && state.token === token) close();
-    }, CLOSE_AFTER_SUCCESS_MS);
+    }, capped ? CLOSE_AFTER_SUCCESS_MS * 4 : CLOSE_AFTER_SUCCESS_MS);
   }
 
   /**
@@ -607,8 +634,20 @@ ${detail}`);
   }
 
   /**
-   * Place the panel next to its anchor, flipping above when there is no room below and
-   * clamping to the viewport on every side.
+   * Place the panel next to its anchor, below it or flipped above.
+   *
+   * The side is picked once per open (and again when the button moves) rather than on every
+   * call. The panel opens with "Loading formats..." and changes height when /info fills in
+   * the details; re-picking on that change would flip it to the other side of the button a
+   * moment after opening. GROW_ROOM leaves space for growth when picking. On the chosen side the height is
+   * capped to the room there, so the panel scrolls inside instead of covering the button, and
+   * it stays attached to the button even when that scrolls off screen. Only when neither side
+   * has MIN_ROOM is it clamped into the viewport over the button.
+   *
+   * Above the button the panel hangs from its bottom edge, so any shrink would move its top
+   * (or, holding the top, open a gap over the button). Its height there never drops below the
+   * tallest it has been since the side was picked: the loaded panel keeps the loading height,
+   * with the spare space at the bottom.
    */
   function position() {
     if (!state) return;
@@ -620,23 +659,98 @@ ${detail}`);
     const panel = ui.root;
     const vw = document.documentElement.clientWidth;
     const vh = window.innerHeight;
-    panel.style.maxHeight = `${vh - VIEWPORT_MARGIN * 2}px`;
-
     const a = anchor.getBoundingClientRect();
+    state.anchorRect = { top: a.top, left: a.left };
+    const spaceBelow = vh - VIEWPORT_MARGIN - (a.bottom + ANCHOR_GAP);
+    const spaceAbove = a.top - ANCHOR_GAP - VIEWPORT_MARGIN;
+    const full = vh - VIEWPORT_MARGIN * 2;
+
+    if (!state.side) {
+      panel.style.maxHeight = `${full}px`;
+      panel.style.minHeight = "";
+      const needed = panel.getBoundingClientRect().height + GROW_ROOM;
+      const side = spaceBelow >= needed || spaceBelow >= spaceAbove ? "below" : "above";
+      // The height lock survives re-picking the same side (a scroll, YouTube moving the
+      // button), or the loaded panel would shrink and its title drop
+      if (side !== state.lastSide) state.minHeight = 0;
+      state.side = side;
+      state.lastSide = side;
+    }
+    // Capped to the viewport: with the button scrolled off the top, the room below it is
+    // larger than the window
+    const room = Math.min(state.side === "below" ? spaceBelow : spaceAbove, full);
+    const cramped = room < MIN_ROOM;
+    const maxHeight = cramped ? full : room;
+    panel.style.maxHeight = `${maxHeight}px`;
+
+    if (state.side === "above" && !cramped) {
+      panel.style.minHeight = "";
+      const natural = panel.getBoundingClientRect().height;
+      state.minHeight = Math.min(Math.max(state.minHeight, natural), maxHeight);
+      panel.style.minHeight = `${state.minHeight}px`;
+    } else {
+      panel.style.minHeight = "";
+    }
     const p = panel.getBoundingClientRect();
 
     let left = a.left;
     if (left + p.width > vw - VIEWPORT_MARGIN) left = a.right - p.width;
     left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - p.width - VIEWPORT_MARGIN));
 
-    let top = a.bottom + ANCHOR_GAP;
-    if (top + p.height > vh - VIEWPORT_MARGIN && a.top - ANCHOR_GAP - p.height >= VIEWPORT_MARGIN) {
-      top = a.top - ANCHOR_GAP - p.height;
-    }
-    top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - p.height - VIEWPORT_MARGIN));
+    let top = state.side === "below" ? a.bottom + ANCHOR_GAP : a.top - ANCHOR_GAP - p.height;
+    // A tiny window, the only case where the panel may cover the button
+    if (cramped) top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - p.height - VIEWPORT_MARGIN));
 
     panel.style.left = `${Math.round(left)}px`;
     panel.style.top = `${Math.round(top)}px`;
+  }
+
+  /**
+   * The button moved (page scroll, window resize, YouTube shifting its layout), so the side
+   * is picked again from scratch.
+   */
+  function reposition() {
+    if (!state) return;
+    state.side = null;
+    position();
+  }
+
+  /**
+   * Page scrolls reposition the panel; scrolling inside the panel itself is left alone, or
+   * scrolling a long panel could flip it to the other side of the button.
+   * @param {Event} event - Scroll event, caught in the capture phase from any scroller.
+   */
+  function onScroll(event) {
+    if (state && event.target instanceof Node && state.ui.root.contains(event.target)) return;
+    reposition();
+  }
+
+  /**
+   * Follow the button every frame while open. YouTube moves it without any scroll or resize
+   * event (the player or description resizing, a banner closing), and the panel would end up
+   * covering the button. One rect read per frame; it repositions only when the button moved.
+   */
+  function trackAnchor() {
+    if (!state) return;
+    const a = state.anchor.getBoundingClientRect();
+    const last = state.anchorRect;
+    if (!last || Math.abs(a.top - last.top) > 0.5 || Math.abs(a.left - last.left) > 0.5) reposition();
+    trackFrame = requestAnimationFrame(trackAnchor);
+  }
+
+  /**
+   * Keep wheel scrolling inside the panel. overscroll-behavior alone does not stop the page
+   * scrolling once the panel hits its end (the panel is position: fixed over the page), so a
+   * wheel turn the panel can't use any more is cancelled instead.
+   * @param {WheelEvent} event - Wheel event on the panel.
+   */
+  function onWheel(event) {
+    // Ctrl+wheel is page zoom, not a scroll
+    if (!state || !event.deltaY || event.ctrlKey) return;
+    const panel = state.ui.root;
+    const atTop = panel.scrollTop <= 0;
+    const atEnd = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 1;
+    if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atEnd)) event.preventDefault();
   }
 
   /**
@@ -772,8 +886,11 @@ ${detail}`);
     ui.root.remove();
     document.removeEventListener("keydown", onKeydown, true);
     document.removeEventListener("pointerdown", onPointerDown, true);
-    window.removeEventListener("resize", position);
-    window.removeEventListener("scroll", position, true);
+    window.removeEventListener("resize", reposition);
+    window.removeEventListener("scroll", onScroll, true);
+    if (resizeObserver) resizeObserver.disconnect();
+    resizeObserver = null;
+    cancelAnimationFrame(trackFrame);
     anchor.setAttribute("aria-expanded", "false");
     if ((opts.restoreFocus || hadFocus) && anchor.isConnected) anchor.focus({ preventScroll: true });
     if (onClose) onClose();
@@ -803,6 +920,14 @@ ${detail}`);
       mode,
       url: opts.url,
       anchor: opts.anchor,
+      // "below" or "above" the anchor; null until position() picks it
+      side: null,
+      // Side of the last pick, so a re-pick to the same side keeps minHeight
+      lastSide: null,
+      // Height the panel may not shrink below while above its button; see position()
+      minHeight: 0,
+      // Button position at the last placement, for trackAnchor
+      anchorRect: null,
       onClose: opts.onClose,
       options: { ...content.settings.defaults },
       info: null,
@@ -817,17 +942,32 @@ ${detail}`);
     bindEvents();
     setStatus("");
     render();
+    // Hidden until the ResizeObserver's first callback below has placed it; that runs before
+    // the first paint, after anything else that changed its height in the opening frame
+    ui.root.style.visibility = "hidden";
     document.body.append(ui.root);
     opts.anchor.setAttribute("aria-expanded", "true");
     position();
 
     document.addEventListener("keydown", onKeydown, true);
     document.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, true);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", onScroll, true);
+    // Content changes (loaded details, Video/Audio tabs, hints) resize the panel; keep it placed
+    // on its side. Runs after layout and before paint, so it never shows in a stale spot.
+    resizeObserver = new ResizeObserver(() => {
+      position();
+      if (!state || state.ui !== ui || !ui.root.style.visibility) return;
+      ui.root.style.visibility = "";
+      // A hidden element can't take focus, so the first tab is focused once shown
+      // preventScroll: a focus scroll would move the button and re-place the panel
+      (state.options.kind === "audio" ? ui.audioTab : ui.videoTab).focus({ preventScroll: true });
+    });
+    resizeObserver.observe(ui.root);
+    ui.root.addEventListener("wheel", onWheel, { passive: false });
+    trackFrame = requestAnimationFrame(trackAnchor);
 
-    (state.options.kind === "audio" ? ui.audioTab : ui.videoTab).focus();
-    loadInfo().then(position);
+    loadInfo();
   }
 
   content.on("navigate", () => close());

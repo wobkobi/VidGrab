@@ -225,13 +225,39 @@ func TestFormatItemsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSelectItemsUsesOneBasedPositions(t *testing.T) {
-	entries := strings.Split("abcdefghij", "")
-	if got := SelectItems(entries, nil); !reflect.DeepEqual(got, entries) {
-		t.Fatalf("SelectItems(nil) = %v", got)
+func TestInRangesUsesOneBasedPositions(t *testing.T) {
+	ranges := []ItemRange{{1, 2}, {5, 5}, {9, 20}}
+	var got []int
+	for pos := 0; pos <= 22; pos++ {
+		if InRanges(pos, ranges) {
+			got = append(got, pos)
+		}
 	}
-	got := SelectItems(entries, []ItemRange{{1, 2}, {5, 5}, {9, 20}})
-	if want := []string{"a", "b", "e", "i", "j"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("SelectItems = %v, want %v", got, want)
+	want := []int{1, 2, 5, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("InRanges selects %v, want %v", got, want)
+	}
+	if !InRanges(1, nil) || !InRanges(MaxItemIndex, nil) {
+		t.Fatal("nil ranges must hold every position")
+	}
+}
+
+func TestLimitItems(t *testing.T) {
+	cases := []struct {
+		ranges []ItemRange
+		n      int
+		want   []ItemRange
+	}{
+		{nil, 1001, []ItemRange{{1, 1001}}},
+		{[]ItemRange{{1, 4}}, 1001, []ItemRange{{1, 4}}},
+		{[]ItemRange{{1, 10}, {15, 15}}, 1001, []ItemRange{{1, 10}, {15, 15}}},
+		{[]ItemRange{{1, 100000}}, 1001, []ItemRange{{1, 1001}}},
+		{[]ItemRange{{1, 10}, {50, 60}, {90, 99}}, 15, []ItemRange{{1, 10}, {50, 54}}},
+		{[]ItemRange{{1, 10}, {50, 54}, {90, 99}}, 15, []ItemRange{{1, 10}, {50, 54}}},
+	}
+	for _, c := range cases {
+		if got := LimitItems(c.ranges, c.n); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("LimitItems(%v, %d) = %v, want %v", c.ranges, c.n, got, c.want)
+		}
 	}
 }

@@ -533,21 +533,35 @@ func FormatItems(ranges []ItemRange) string {
 	return strings.Join(parts, ",")
 }
 
-// SelectItems picks the entries whose 1-based position falls inside any range, in their
-// original order. Nil ranges select every entry.
-func SelectItems[T any](entries []T, ranges []ItemRange) []T {
+// InRanges reports whether the 1-based position pos falls inside any range. Nil ranges hold
+// every position.
+func InRanges(pos int, ranges []ItemRange) bool {
 	if ranges == nil {
-		return append([]T(nil), entries...)
+		return true
 	}
-	var selected []T
-	for i, entry := range entries {
-		pos := i + 1
-		for _, r := range ranges {
-			if r.Start <= pos && pos <= r.End {
-				selected = append(selected, entry)
-				break
-			}
+	for _, r := range ranges {
+		if r.Start <= pos && pos <= r.End {
+			return true
 		}
 	}
-	return selected
+	return false
+}
+
+// LimitItems cuts sorted, merged ranges (as ParseItems returns them) down to their first n
+// positions, so a listing asked for them fetches at most n entries. Nil ranges mean every item
+// and become 1-n.
+func LimitItems(ranges []ItemRange, n int) []ItemRange {
+	if ranges == nil {
+		return []ItemRange{{1, n}}
+	}
+	var limited []ItemRange
+	for _, r := range ranges {
+		if n <= 0 {
+			break
+		}
+		end := min(r.End, r.Start+n-1)
+		limited = append(limited, ItemRange{r.Start, end})
+		n -= end - r.Start + 1
+	}
+	return limited
 }
