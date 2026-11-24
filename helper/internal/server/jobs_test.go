@@ -719,7 +719,7 @@ func TestClearFinishedKeepsActive(t *testing.T) {
 	waitFor(t, func() bool { return status(t, q, done) == "complete" })
 	q.SetConcurrency(0)
 	waiting := create(t, q, watchURL(videos[1]), defaults())
-	if removed := q.ClearFinished(); removed != 1 {
+	if removed := q.ClearFinished(false); removed != 1 {
 		t.Fatalf("removed %d", removed)
 	}
 	listed := q.List()
@@ -758,10 +758,119 @@ func TestPruneFinishedKeepsNewestAndActive(t *testing.T) {
 	}
 }
 
+func TestPruneFinishedKeepsWholeGroups(t *testing.T) {
+	q := NewJobQueue(QueueConfig{})
+	add := func(id, group, status string) {
+		q.jobs[id] = &job{id: id, groupID: group, status: status}
+		q.order = append(q.order, id)
+	}
+	// Oldest first: a finished group, a group still downloading, a cancelled 1000-item group,
+	// a group with one failure, then enough single videos to go over the limit
+	for i := 0; i < 10; i++ {
+		add(fmt.Sprintf("old-%d", i), "old", StatusComplete)
+	}
+	add("busy-0", "busy", StatusComplete)
+	add("busy-1", "busy", StatusQueued)
+	for i := 0; i < MaxGroupItems; i++ {
+		add(fmt.Sprintf("big-%d", i), "big", StatusCancelled)
+	}
+	add("mixed-0", "mixed", StatusComplete)
+	add("mixed-1", "mixed", StatusError)
+	for i := 0; i < MaxFinishedJobs; i++ {
+		add(fmt.Sprintf("one-%d", i), "", StatusComplete)
+	}
+	q.pruneFinishedLocked()
+	if len(q.order) != len(q.jobs) {
+		t.Fatalf("order %d, jobs %d", len(q.order), len(q.jobs))
+	}
+	// 510 complete jobs counted: the old group (10) goes in full, and nothing else
+	for _, gone := range []string{"old-0", "old-9"} {
+		if _, ok := q.jobs[gone]; ok {
+			t.Errorf("%s should be pruned", gone)
+		}
+	}
+	for _, kept := range []string{"busy-0", "busy-1", "big-0", fmt.Sprintf("big-%d", MaxGroupItems-1), "mixed-0", "mixed-1", "one-0"} {
+		if _, ok := q.jobs[kept]; !ok {
+			t.Errorf("%s should be kept", kept)
+		}
+	}
+	if want := 2 + MaxGroupItems + 2 + MaxFinishedJobs; len(q.jobs) != want {
+		t.Errorf("%d jobs kept, want %d", len(q.jobs), want)
+	}
+
+	// One more success pushes out the oldest single video, never the cancelled group
+	add("one-new", "", StatusComplete)
+	q.pruneFinishedLocked()
+	if _, ok := q.jobs["one-0"]; ok {
+		t.Error("one-0 should be pruned")
+	}
+	if _, ok := q.jobs["big-0"]; !ok {
+		t.Error("the cancelled group should be kept")
+	}
+}
+
+func TestPruneHardCapForgetsOldFailures(t *testing.T) {
+	q := NewJobQueue(QueueConfig{})
+	add := func(id, group, status string) {
+		q.jobs[id] = &job{id: id, groupID: group, status: status}
+		q.order = append(q.order, id)
+	}
+	// Six cancelled 1000-video groups, oldest first, plus one queued video: 6001 jobs
+	for g := 0; g < 6; g++ {
+		for i := 0; i < MaxGroupItems; i++ {
+			add(fmt.Sprintf("g%d-%d", g, i), fmt.Sprint("g", g), StatusCancelled)
+		}
+	}
+	add("waiting", "", StatusQueued)
+	q.pruneFinishedLocked()
+	if len(q.order) != len(q.jobs) || len(q.jobs) != 4*MaxGroupItems+1 {
+		t.Fatalf("order %d, jobs %d", len(q.order), len(q.jobs))
+	}
+	for _, gone := range []string{"g0-0", "g1-999"} {
+		if _, ok := q.jobs[gone]; ok {
+			t.Errorf("%s should be pruned", gone)
+		}
+	}
+	for _, kept := range []string{"g2-0", "g5-999", "waiting"} {
+		if _, ok := q.jobs[kept]; !ok {
+			t.Errorf("%s should be kept", kept)
+		}
+	}
+}
+
+func TestClearFinishedWholeDownloads(t *testing.T) {
+	q := NewJobQueue(QueueConfig{})
+	add := func(id, group, status string) {
+		q.jobs[id] = &job{id: id, groupID: group, status: status}
+		q.order = append(q.order, id)
+	}
+	add("done", "", StatusComplete)
+	add("stopped", "", StatusCancelled)
+	add("broke", "", StatusError)
+	// A group with a failure, and a group still downloading
+	add("mixed-0", "mixed", StatusComplete)
+	add("mixed-1", "mixed", StatusError)
+	add("busy-0", "busy", StatusComplete)
+	add("busy-1", "busy", StatusDownloading)
+
+	if removed := q.ClearFinished(false); removed != 2 {
+		t.Fatalf("removed %d, want done and stopped", removed)
+	}
+	if !slices.Equal(q.order, []string{"broke", "mixed-0", "mixed-1", "busy-0", "busy-1"}) {
+		t.Fatalf("order %v", q.order)
+	}
+	if removed := q.ClearFinished(true); removed != 3 {
+		t.Fatalf("removed %d, want broke and the mixed group", removed)
+	}
+	if !slices.Equal(q.order, []string{"busy-0", "busy-1"}) || len(q.jobs) != 2 {
+		t.Fatalf("order %v", q.order)
+	}
+}
+
 func TestPlaylistExpansionWithRange(t *testing.T) {
 	dir := t.TempDir()
 	var calls []string
-	fetcher := func(canonical string) (map[string]any, error) {
+	fetcher := func(canonical string, _ []core.ItemRange) (map[string]any, error) {
 		calls = append(calls, canonical)
 		var entries []any
 		for i, v := range videos {
@@ -826,7 +935,7 @@ func TestSameVideoInSameFolderRunsOneAtATime(t *testing.T) {
 
 func TestChannelFolderDropsTabSuffix(t *testing.T) {
 	dir := t.TempDir()
-	fetcher := func(string) (map[string]any, error) {
+	fetcher := func(string, []core.ItemRange) (map[string]any, error) {
 		return map[string]any{"title": "Jawed - Videos", "entries": []any{map[string]any{"id": videos[0], "title": "a"}}}, nil
 	}
 	starter := newBlockingStarter()
@@ -846,7 +955,7 @@ func TestChannelFolderDropsTabSuffix(t *testing.T) {
 }
 
 func TestPlaylistEntriesKeepTheirChannel(t *testing.T) {
-	fetcher := func(string) (map[string]any, error) {
+	fetcher := func(string, []core.ItemRange) (map[string]any, error) {
 		return map[string]any{"title": "Mix", "entries": []any{
 			map[string]any{"id": videos[0], "title": "a", "channel": "First"},
 			map[string]any{"id": videos[1], "title": "b", "uploader": "second"},
@@ -866,7 +975,7 @@ func TestPlaylistEntriesKeepTheirChannel(t *testing.T) {
 
 func TestPlaylistEmptyRangeAndCap(t *testing.T) {
 	dir := t.TempDir()
-	few := func(string) (map[string]any, error) {
+	few := func(string, []core.ItemRange) (map[string]any, error) {
 		return map[string]any{"title": "t", "entries": []any{map[string]any{"id": videos[0], "title": "a"}}}, nil
 	}
 	q := makeQueue(t, dir, newBlockingStarter(), func(c *QueueConfig) { c.FetchInfo = few })
@@ -876,7 +985,7 @@ func TestPlaylistEmptyRangeAndCap(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 
-	many := func(string) (map[string]any, error) {
+	many := func(string, []core.ItemRange) (map[string]any, error) {
 		var entries []any
 		for i := 0; i < 1001; i++ {
 			entries = append(entries, map[string]any{"id": fmt.Sprintf("%011d", i), "title": fmt.Sprint(i)})
@@ -884,12 +993,96 @@ func TestPlaylistEmptyRangeAndCap(t *testing.T) {
 		return map[string]any{"title": "t", "entries": entries}, nil
 	}
 	q = makeQueue(t, dir, newBlockingStarter(), func(c *QueueConfig) { c.FetchInfo = many })
-	_, err = q.Create("https://www.youtube.com/@jawed", defaults(), nil)
-	if !errors.As(err, &jobErr) || jobErr.Status != 400 || !strings.HasPrefix(jobErr.Message, "Too many videos (1001)") {
-		t.Fatalf("got %v", err)
+	jobs, next, err := q.CreateCapped("https://www.youtube.com/@jawed", defaults(), nil)
+	if err != nil || next != MaxGroupItems+1 || len(jobs) != MaxGroupItems || str(jobs[MaxGroupItems-1].Title) != "999" {
+		t.Fatalf("got %d jobs, next %d, %v", len(jobs), next, err)
 	}
-	if len(q.List()) != 0 {
-		t.Fatal("jobs were queued")
+}
+
+// limitedListing answers like yt-dlp --flat-playlist --playlist-items on a list of total
+// videos: only the entries in items, with their positions in requested_entries.
+func limitedListing(total int, items []core.ItemRange) map[string]any {
+	entries, positions := []any{}, []any{}
+	for pos := 1; pos <= total; pos++ {
+		if core.InRanges(pos, items) {
+			entries = append(entries, map[string]any{"id": fmt.Sprintf("v%010d", pos), "title": fmt.Sprint(pos)})
+			positions = append(positions, json.Number(fmt.Sprint(pos)))
+		}
+	}
+	return map[string]any{"title": "Linus Tech Tips - Videos", "entries": entries, "requested_entries": positions}
+}
+
+func TestPlaylistListsOnlyTheItemsInRange(t *testing.T) {
+	var asked [][]core.ItemRange
+	fetcher := func(_ string, items []core.ItemRange) (map[string]any, error) {
+		asked = append(asked, items)
+		return limitedListing(5000, items), nil
+	}
+	q := makeQueue(t, t.TempDir(), newBlockingStarter(), withConcurrency(0), func(c *QueueConfig) { c.FetchInfo = fetcher })
+	channel := "https://www.youtube.com/@LinusTechTips"
+	ranges := []core.ItemRange{{Start: 1, End: 4}, {Start: 4990, End: 6000}}
+	jobs, err := q.Create(channel, defaults(), ranges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cut to the cap plus one: 4 + 997 positions
+	if len(asked) != 1 || core.FormatItems(asked[0]) != "1-4,4990-5986" {
+		t.Fatalf("listing asked for %v", asked)
+	}
+	var titles []string
+	for _, j := range jobs {
+		titles = append(titles, str(j.Title))
+	}
+	want := []string{"1", "2", "3", "4", "4990", "4991", "4992", "4993", "4994", "4995", "4996", "4997", "4998", "4999", "5000"}
+	if !slices.Equal(titles, want) {
+		t.Fatalf("titles %v", titles)
+	}
+	if str(jobs[0].GroupTitle) != "Linus Tech Tips" || jobs[0].URL != watchURL("v0000000001") {
+		t.Fatalf("job %+v", jobs[0])
+	}
+
+	// Every item, or a range far past the cap, lists only one entry past it and queues the
+	// first 1000
+	asked = nil
+	for _, r := range [][]core.ItemRange{nil, {{Start: 1, End: 100000}}} {
+		capJobs, next, err := q.CreateCapped(channel, defaults(), r)
+		if err != nil || next != 1001 || len(capJobs) != MaxGroupItems || str(capJobs[0].Title) != "1" || str(capJobs[MaxGroupItems-1].Title) != "1000" {
+			t.Fatalf("ranges %v: %d jobs, next %d, %v", r, len(capJobs), next, err)
+		}
+	}
+	if len(asked) != 2 || core.FormatItems(asked[0]) != "1-1001" || core.FormatItems(asked[1]) != "1-1001" {
+		t.Fatalf("listing asked for %v", asked)
+	}
+
+	// A selection starting part-way names the real next position, not 1001
+	capJobs, next, err := q.CreateCapped(channel, defaults(), []core.ItemRange{{Start: 500, End: 2000}})
+	if err != nil || next != 1500 || len(capJobs) != MaxGroupItems || str(capJobs[MaxGroupItems-1].Title) != "1499" {
+		t.Fatalf("500-2000: %d jobs, next %d, %v", len(capJobs), next, err)
+	}
+
+	var jobErr *JobError
+	_, err = q.Create(channel, defaults(), []core.ItemRange{{Start: 6000, End: 6010}})
+	if !errors.As(err, &jobErr) || jobErr.Message != "No videos in that range" {
+		t.Fatalf("past the end: %v", err)
+	}
+	if len(q.List()) != len(want)+3*MaxGroupItems {
+		t.Fatalf("%d jobs queued", len(q.List()))
+	}
+}
+
+func TestPlaylistRejectsMismatchedPositions(t *testing.T) {
+	for _, positions := range []any{[]any{json.Number("1")}, []any{json.Number("1"), json.Number("0")}, []any{1.5, 2.0}, "1,2"} {
+		fetcher := func(string, []core.ItemRange) (map[string]any, error) {
+			raw := limitedListing(2, nil)
+			raw["requested_entries"] = positions
+			return raw, nil
+		}
+		q := makeQueue(t, t.TempDir(), newBlockingStarter(), func(c *QueueConfig) { c.FetchInfo = fetcher })
+		_, err := q.Create("https://www.youtube.com/@jawed", defaults(), []core.ItemRange{{Start: 1, End: 2}})
+		var ytErr *core.YtDlpError
+		if !errors.As(err, &ytErr) || len(q.List()) != 0 {
+			t.Errorf("positions %v: %v", positions, err)
+		}
 	}
 }
 

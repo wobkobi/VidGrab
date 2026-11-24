@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,9 +40,14 @@ const (
 // MaxGroupItems caps how many child jobs one playlist or channel may queue.
 const MaxGroupItems = 1000
 
-// MaxFinishedJobs caps how many complete, failed and cancelled jobs the queue remembers; the
-// oldest are forgotten first and their files are untouched. Active jobs never count.
+// MaxFinishedJobs caps how many complete jobs the queue remembers; the oldest successful
+// downloads are forgotten first and their files are untouched. Failed and cancelled jobs stay
+// until cleared, and with active jobs never count; see pruneFinishedLocked.
 const MaxFinishedJobs = 500
+
+// MaxRememberedJobs caps every job the queue remembers. Past it, the oldest finished downloads
+// are forgotten even when failed or cancelled; active ones never are.
+const MaxRememberedJobs = 5000
 
 // maxLineBytes bounds one line of yt-dlp output; anything longer is cut, never buffered.
 const maxLineBytes = 1 << 20
@@ -270,8 +276,10 @@ type QueueConfig struct {
 	// Kill stops a process tree; KillProcessTree by default.
 	Kill KillFunc
 	// FetchInfo lists a playlist or channel (flat yt-dlp JSON) for expansion into jobs; nil
-	// makes playlist downloads fail with 500.
-	FetchInfo func(canonical string) (map[string]any, error)
+	// makes playlist downloads fail with 500. items, when not nil, are the only positions the
+	// listing needs: it may hold just those entries with their positions in
+	// "requested_entries" (what yt-dlp --playlist-items gives), or every entry.
+	FetchInfo func(canonical string, items []core.ItemRange) (map[string]any, error)
 	// TitleLookup returns a video title already known (from /info), or "".
 	TitleLookup func(canonical string) string
 	// VideoInfo returns full (not flat) yt-dlp JSON for one video, which a size-limited job
@@ -309,7 +317,7 @@ type JobQueue struct {
 	tools        func() core.Tools
 	start        StartFunc
 	kill         KillFunc
-	fetchInfo    func(string) (map[string]any, error)
+	fetchInfo    func(string, []core.ItemRange) (map[string]any, error)
 	titleLookup  func(string) string
 	videoInfo    func(context.Context, string) (map[string]any, error)
 	encoder      func(context.Context, string) string
@@ -424,15 +432,24 @@ func (q *JobQueue) Running() bool {
 //
 // rawURL is validated again here; ranges are the parsed item ranges for a playlist or channel
 // (nil selects every item). Errors are *core.InvalidUrl, a *JobError (400 when a list has no
-// entries in range or too many, 500 without FetchInfo) or the FetchInfo error (normally a
+// entries in range, 500 without FetchInfo) or the FetchInfo error (normally a
 // *core.YtDlpError).
 func (q *JobQueue) Create(rawURL string, options core.JobOptions, ranges []core.ItemRange) ([]JobView, error) {
+	jobs, _, err := q.CreateCapped(rawURL, options, ranges)
+	return jobs, err
+}
+
+// CreateCapped is Create that also reports, when a playlist or channel selection had more
+// than MaxGroupItems videos and only the first MaxGroupItems were queued, the list position
+// the rest starts at (0 when nothing was left out).
+func (q *JobQueue) CreateCapped(rawURL string, options core.JobOptions, ranges []core.ItemRange) ([]JobView, int, error) {
 	parsed, err := core.Classify(rawURL)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	root := q.downloadsDir()
 	var jobs []*job
+	next := 0
 	if parsed.Kind == core.KindVideo {
 		title := ""
 		if q.titleLookup != nil {
@@ -441,15 +458,17 @@ func (q *JobQueue) Create(rawURL string, options core.JobOptions, ranges []core.
 		jobs = []*job{newJob(parsed.Canonical, parsed.ID, options, root, title, "", "")}
 	} else {
 		if q.fetchInfo == nil {
-			return nil, &JobError{Status: 500, Message: "Playlist downloads are not available"}
+			return nil, 0, &JobError{Status: 500, Message: "Playlist downloads are not available"}
 		}
-		info, err := q.fetchInfo(parsed.Canonical)
+		// One position past the cap is enough to tell a selection is too big, so a huge
+		// channel is never listed in full
+		info, err := q.fetchInfo(parsed.Canonical, core.LimitItems(ranges, MaxGroupItems+1))
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		jobs, err = expandEntries(info, parsed, options, ranges, root)
+		jobs, next, err = expandEntries(info, parsed, options, ranges, root)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -463,16 +482,29 @@ func (q *JobQueue) Create(rawURL string, options core.JobOptions, ranges []core.
 	log.Printf("jobs: queued %d job(s) for %s %s (%s)", len(jobs), parsed.Kind, parsed.ID, options.Kind)
 	q.scheduleLocked()
 	q.mu.Unlock()
-	return result, nil
+	return result, next, nil
 }
 
 // expandEntries turns flat playlist/channel JSON into one job per selected, well-formed entry,
-// all sharing a group id and a subfolder named after the list.
-func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobOptions, ranges []core.ItemRange, root string) ([]*job, error) {
-	type entry struct{ id, title, channel string }
-	var entries []entry
+// all sharing a group id and a subfolder named after the list. A selection over MaxGroupItems
+// keeps its first MaxGroupItems entries and returns the position of the next one.
+//
+// An entry's position is its place in the whole list. A listing limited by --playlist-items
+// names each entry's position in "requested_entries"; a full listing has none, and its
+// well-formed entries are numbered 1, 2, 3... in order.
+func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobOptions, ranges []core.ItemRange, root string) (jobs []*job, next int, err error) {
+	type entry struct {
+		id, title, channel string
+		pos                int
+	}
 	list, _ := info["entries"].([]any)
-	for _, item := range list {
+	positions, limited, err := listPositions(info, len(list))
+	if err != nil {
+		return nil, 0, err
+	}
+	var selected []entry
+	pos := 0
+	for i, item := range list {
 		e, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -484,15 +516,24 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 		if !core.IsVideoID(id) {
 			continue
 		}
+		pos++
+		if limited {
+			pos = positions[i]
+		}
+		if !core.InRanges(pos, ranges) {
+			continue
+		}
 		title, _ := e["title"].(string)
-		entries = append(entries, entry{id, title, core.ChannelOf(e)})
+		selected = append(selected, entry{id, title, core.ChannelOf(e), pos})
 	}
-	selected := core.SelectItems(entries, ranges)
 	if len(selected) == 0 {
-		return nil, &JobError{Status: 400, Message: "No videos in that range"}
+		return nil, 0, &JobError{Status: 400, Message: "No videos in that range"}
 	}
+	// Entries are in list order, so this keeps the lowest positions (a channel's newest videos)
 	if len(selected) > MaxGroupItems {
-		return nil, &JobError{Status: 400, Message: fmt.Sprintf("Too many videos (%d); choose a range of at most %d", len(selected), MaxGroupItems)}
+		// The rest starts at the first left-out entry, wherever the selection began
+		next = selected[MaxGroupItems].pos
+		selected = selected[:MaxGroupItems]
 	}
 	groupTitle, _ := info["title"].(string)
 	if groupTitle == "" {
@@ -505,11 +546,11 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 	}
 	outDir := filepath.Join(root, SanitiseFolderName(groupTitle, "Playlist"))
 	groupID := newJobID()
-	jobs := make([]*job, 0, len(selected))
+	jobs = make([]*job, 0, len(selected))
 	for _, e := range selected {
 		watch, err := core.WatchUrl(e.id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		j := newJob(watch, e.id, options, outDir, e.title, groupID, groupTitle)
 		j.channel = e.channel
@@ -519,7 +560,45 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 		}
 		jobs = append(jobs, j)
 	}
-	return jobs, nil
+	return jobs, next, nil
+}
+
+// listPositions reads a listing's "requested_entries", the 1-based list position of each of
+// its n entries. limited is false for a full listing, which has none. A value that does not
+// give one whole positive number per entry is a *core.YtDlpError, since numbering such a
+// listing 1, 2, 3... would queue the wrong videos.
+func listPositions(info map[string]any, n int) (positions []int, limited bool, err error) {
+	raw, ok := info["requested_entries"]
+	if !ok || raw == nil {
+		return nil, false, nil
+	}
+	unreadable := &core.YtDlpError{Message: "yt-dlp returned unreadable data", Detail: "requested_entries does not match the entries"}
+	list, ok := raw.([]any)
+	if !ok || len(list) != n {
+		return nil, false, unreadable
+	}
+	positions = make([]int, n)
+	for i, v := range list {
+		var pos int64
+		switch x := v.(type) {
+		case json.Number:
+			pos, err = x.Int64()
+		case float64:
+			pos = int64(x)
+			if float64(pos) != x {
+				err = unreadable
+			}
+		case int:
+			pos = int64(x)
+		default:
+			err = unreadable
+		}
+		if err != nil || pos < 1 {
+			return nil, false, unreadable
+		}
+		positions[i] = int(pos)
+	}
+	return positions, true, nil
 }
 
 func newJob(url, videoID string, options core.JobOptions, outDir, title, groupID, groupTitle string) *job {
@@ -652,49 +731,109 @@ func (q *JobQueue) FinishedFile(id string) (string, error) {
 	return path, nil
 }
 
-// ClearFinished removes complete, failed and cancelled jobs (their files are untouched) and
-// returns how many were removed.
-func (q *JobQueue) ClearFinished() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	kept := q.order[:0]
-	removed := 0
-	for _, id := range q.order {
-		j := q.jobs[id]
-		if j.isFinishedStatus() && !j.running {
-			delete(q.jobs, id)
-			removed++
-			continue
-		}
-		kept = append(kept, id)
-	}
-	q.order = kept
-	return removed
+// download is one card in the popup: a single video, or every job of a playlist or channel
+// group. Clearing and pruning work on whole downloads, so a card never loses part of its count.
+type download struct {
+	ids []string
+	// Every job is complete, failed or cancelled, and none is still exiting
+	finished bool
+	// Every job is complete
+	complete bool
+	// At least one job failed
+	failed bool
 }
 
-// pruneFinishedLocked forgets the oldest finished jobs beyond MaxFinishedJobs. A finished job
-// whose process is still exiting is skipped, as in ClearFinished. Callers hold q.mu.
-func (q *JobQueue) pruneFinishedLocked() {
-	finished := 0
+// downloadsLocked groups q.order into downloads, oldest first by their first job. Callers hold
+// q.mu.
+func (q *JobQueue) downloadsLocked() []*download {
+	var list []*download
+	byGroup := map[string]*download{}
 	for _, id := range q.order {
-		if j := q.jobs[id]; j.isFinishedStatus() && !j.running {
-			finished++
+		j := q.jobs[id]
+		d := byGroup[j.groupID]
+		if d == nil || j.groupID == "" {
+			d = &download{finished: true, complete: true}
+			list = append(list, d)
+			if j.groupID != "" {
+				byGroup[j.groupID] = d
+			}
 		}
+		d.ids = append(d.ids, id)
+		done := j.isFinishedStatus() && !j.running
+		d.finished = d.finished && done
+		d.complete = d.complete && done && j.status == StatusComplete
+		d.failed = d.failed || j.status == StatusError
 	}
-	excess := finished - MaxFinishedJobs
-	if excess <= 0 {
-		return
+	return list
+}
+
+// forgetLocked drops the given downloads' jobs from the queue and returns how many it dropped.
+// Callers hold q.mu.
+func (q *JobQueue) forgetLocked(list []*download) int {
+	forget := map[string]bool{}
+	for _, d := range list {
+		for _, id := range d.ids {
+			forget[id] = true
+			delete(q.jobs, id)
+		}
 	}
 	kept := q.order[:0]
 	for _, id := range q.order {
-		if j := q.jobs[id]; excess > 0 && j.isFinishedStatus() && !j.running {
-			delete(q.jobs, id)
-			excess--
-			continue
+		if !forget[id] {
+			kept = append(kept, id)
 		}
-		kept = append(kept, id)
 	}
 	q.order = kept
+	return len(forget)
+}
+
+// ClearFinished forgets every finished download (files untouched) and returns how many jobs it
+// removed. One with a failed job stays unless failed is set, so an error is not cleared away
+// along with the successes before it was read. A download with any job still active or
+// exiting stays whole.
+func (q *JobQueue) ClearFinished(failed bool) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var clear []*download
+	for _, d := range q.downloadsLocked() {
+		if d.finished && (failed || !d.failed) {
+			clear = append(clear, d)
+		}
+	}
+	return q.forgetLocked(clear)
+}
+
+// pruneFinishedLocked forgets the oldest successful downloads while more than MaxFinishedJobs
+// complete jobs are remembered. Only a download whose jobs all completed goes, and only in
+// full. One with a failed or cancelled job doesn't count and stays until the user clears or
+// retries it, so a cancelled 1000-video channel can't push other downloads out or vanish
+// itself; only the MaxRememberedJobs hard limit forgets it. The newest download is always
+// kept. Callers hold q.mu.
+func (q *JobQueue) pruneFinishedLocked() {
+	list := q.downloadsLocked()
+	complete := 0
+	for _, d := range list {
+		if d.complete {
+			complete += len(d.ids)
+		}
+	}
+	// Past MaxRememberedJobs in all, the oldest finished downloads go whatever their outcome,
+	// so failed and cancelled ones the user never clears can't grow the queue without bound
+	total := len(q.order)
+	var prune []*download
+	for _, d := range list[:max(len(list)-1, 0)] {
+		if complete <= MaxFinishedJobs && total <= MaxRememberedJobs {
+			break
+		}
+		if d.complete || (d.finished && total > MaxRememberedJobs) {
+			prune = append(prune, d)
+			total -= len(d.ids)
+			if d.complete {
+				complete -= len(d.ids)
+			}
+		}
+	}
+	q.forgetLocked(prune)
 }
 
 // ApplySettings updates the queue settings; a higher concurrency starts waiting jobs straight

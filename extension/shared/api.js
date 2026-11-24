@@ -163,7 +163,10 @@ YTDL.api = (function () {
     listJobs: () => request("GET", "/jobs", {timeout: TIMEOUTS.jobs}),
     jobAction: (id, action) =>
       request("POST", `/jobs/${encodeURIComponent(id)}/${action}`, {timeout: TIMEOUTS.jobs}),
-    clearFinished: () => request("DELETE", "/jobs?finished=true", {timeout: TIMEOUTS.jobs}),
+    // failed: also clear downloads with a failed job. A helper before 2.10.0 ignores it and
+    // always clears them.
+    clearFinished: (failed = false) =>
+      request("DELETE", `/jobs?finished=true${failed ? "&failed=true" : ""}`, {timeout: TIMEOUTS.jobs}),
     putSettings: (settings) => request("PUT", "/settings", {body: settings, timeout: TIMEOUTS.jobs}),
     update: () => request("POST", "/update", {timeout: TIMEOUTS.update}),
   };

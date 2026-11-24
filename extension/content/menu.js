@@ -24,6 +24,8 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     "ytd-playlist-panel-video-renderer",
     "ytd-reel-item-renderer",
   ].join(",");
+  // Single-video rows inside a list, whose links carry &list= without the row being a list
+  const LIST_ROWS = "ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer";
   const VIDEO_LINK = 'a[href*="/watch?v="], a[href*="/shorts/"]';
   // The open menu's item list: the older Polymer menu, then the newer list view model
   const MENU_LISTS = ["ytd-menu-popup-renderer tp-yt-paper-listbox", "ytd-menu-popup-renderer #items", "yt-list-view-model", '[role="menu"]', '[role="listbox"]'];
@@ -45,11 +47,13 @@ var YTDL = globalThis.YTDL || (globalThis.YTDL = {});
     const link = card.querySelector(VIDEO_LINK);
     if (!link) return null;
     const href = link.getAttribute("href") || "";
-    // A playlist or mix card links to its first video with &list=; skip those, since the item
-    // would download one video while the card stands for the whole list
-    if (card.matches("yt-lockup-view-model") && /[?&]list=/.test(href) && !card.querySelector('a[href*="/shorts/"]')) {
-      const meta = card.querySelector('a[href^="/playlist?list="]');
-      if (meta || /[?&]start_radio=/.test(href)) return null;
+    // A playlist or Mix card links to its first video with &list=; skip those, since the item
+    // would download one video while the card stands for the whole list. Any link on the card
+    // counts (the first one isn't always the list link), and Mix ids start with RD ("My Mix"
+    // is RDMM). Rows of a playlist page or the watch-page queue carry &list= too, but each
+    // stands for one video.
+    if (!card.matches(LIST_ROWS) && !card.querySelector('a[href*="/shorts/"]')) {
+      if (card.querySelector('a[href^="/playlist?list="], a[href*="start_radio="], a[href*="list=RD"]')) return null;
     }
     const id = content.videoIdFromUrl(href);
     return id ? `https://www.youtube.com/watch?v=${id}` : null;
