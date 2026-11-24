@@ -179,6 +179,10 @@ async function pushSettings() {
       fragments: settings.fragments,
       cookies: settings.cookies,
       auto_update: settings.auto_update,
+      // Helpers before 2.10.0 ignore these and keep 200, 1000 and 500
+      list_limit: settings.list_limit,
+      group_limit: settings.group_limit,
+      keep_finished: settings.keep_finished,
     }),
   );
   if (!res.ok) console.warn("[yt-dl] Could not push settings:", res.error);
@@ -551,7 +555,7 @@ const HANDLERS = {
     if (!isText(message.url)) return {ok: false, error: "Missing URL", status: 400};
     const hit = cachedInfo(message.url);
     if (hit) return {ok: true, data: hit};
-    const res = await withBackend(() => api.info(message.url));
+    const res = await withBackend(() => api.info(message.url, settings.list_limit));
     if (res.ok) storeInfo(message.url, res.data);
     return res;
   },
@@ -603,7 +607,10 @@ const HANDLERS = {
   },
 
   async settingsChanged() {
+    const listLimit = settings.list_limit;
     await loadSettings();
+    // Cached listings were cut at the old limit
+    if (settings.list_limit !== listLimit) infoCache.clear();
     const pushed = state.backend.reachable ? await pushSettings() : false;
     return {ok: true, data: {pushed}};
   },

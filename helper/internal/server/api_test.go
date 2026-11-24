@@ -577,14 +577,15 @@ func TestInfoPlaylist(t *testing.T) {
 }
 
 func TestInfoListLengthBound(t *testing.T) {
+	listLimit := core.DefaultSettings().ListLimit
 	for _, tc := range []struct {
 		long  int
 		count any
 		shown int
 	}{
-		{InfoListMax, float64(InfoListMax), InfoListMax},
-		{InfoListMax + 1, nil, InfoListMax},
-		{5000, nil, InfoListMax},
+		{listLimit, float64(listLimit), listLimit},
+		{listLimit + 1, nil, listLimit},
+		{5000, nil, listLimit},
 	} {
 		e := newEnv(t)
 		e.fetcher.long = tc.long
@@ -907,7 +908,7 @@ func TestPutSettingsPartialAndPersisted(t *testing.T) {
 	e := newEnv(t)
 	resp := e.do("PUT", "/settings", map[string]any{"concurrency": 4, "cookies": true}, nil)
 	expectStatus(t, resp, 200)
-	if string(resp.body) != "{\"concurrency\":4,\"fragments\":4,\"cookies\":true,\"auto_update\":true}\n" {
+	if string(resp.body) != "{\"concurrency\":4,\"fragments\":4,\"cookies\":true,\"auto_update\":true,\"list_limit\":200,\"group_limit\":1000,\"keep_finished\":500}\n" {
 		t.Fatalf("body %s", resp.body)
 	}
 	e.queue.mu.Lock()
@@ -953,11 +954,43 @@ func TestCorruptSettingsFileFallsBackToDefaults(t *testing.T) {
 
 func TestPutSettingsBounds(t *testing.T) {
 	e := newEnv(t)
-	for _, body := range []map[string]any{{"concurrency": 0}, {"concurrency": 6}, {"fragments": 9}, {"cookies": "maybe"}} {
+	for _, body := range []map[string]any{
+		{"concurrency": 0}, {"concurrency": 6}, {"fragments": 9}, {"cookies": "maybe"},
+		{"list_limit": 49}, {"list_limit": 5001}, {"group_limit": 0}, {"group_limit": 2001}, {"keep_finished": 49}, {"keep_finished": 2001},
+	} {
 		resp := e.do("PUT", "/settings", body, nil)
 		if resp.status != 400 || resp.json(t)["error"] != "Invalid request" {
 			t.Errorf("%v: %d %s", body, resp.status, resp.body)
 		}
+	}
+}
+
+// A new list_limit changes how far /info lists and drops listings cut at the old one;
+// group_limit caps the next download and reports the cap it used.
+func TestPutSettingsLimits(t *testing.T) {
+	e := newEnv(t)
+	e.fetcher.long = 500
+	e.get(infoURL(playlistURL))
+	resp := e.do("PUT", "/settings", map[string]any{"list_limit": 300, "group_limit": 2, "keep_finished": 60}, nil)
+	expectStatus(t, resp, 200)
+	body := e.get(infoURL(playlistURL)).json(t)
+	if n := len(body["entries"].([]any)); n != 300 || body["entry_count"] != nil {
+		t.Fatalf("%d entries, entry_count %v", n, body["entry_count"])
+	}
+	created := e.post("/jobs", map[string]any{"url": playlistURL, "items": "1-5"})
+	expectStatus(t, created, 202)
+	got := created.json(t)
+	if len(got["jobs"].([]any)) != 2 || got["capped"] != 2.0 || got["next"] != 3.0 {
+		t.Fatalf("create %s", created.body)
+	}
+	want := []fetchCall{{playlistURL, true, "1-201"}, {playlistURL, true, "1-301"}, {playlistURL, true, "1-3"}}
+	if calls := e.fetcher.recorded(); !slices.Equal(calls, want) {
+		t.Fatalf("calls %v", calls)
+	}
+	e.queue.mu.Lock()
+	defer e.queue.mu.Unlock()
+	if e.queue.groupLimit != 2 || e.queue.keepFinished != 60 {
+		t.Fatalf("queue limits %d %d", e.queue.groupLimit, e.queue.keepFinished)
 	}
 }
 

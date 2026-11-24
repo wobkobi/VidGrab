@@ -40,6 +40,9 @@ test("mergeSettings replaces invalid values and clamps numbers", () => {
     defaults: {quality: "999", codec: "h265", container: "avi"},
     concurrency: 99,
     fragments: "0",
+    list_limit: 10,
+    group_limit: "1500",
+    keep_finished: "lots",
     notifications: "yes",
     selectors: {watchContainer: "   ", watchInsertion: "middle", shortsBar: " #bar "},
   });
@@ -48,6 +51,9 @@ test("mergeSettings replaces invalid values and clamps numbers", () => {
   assert.equal(merged.defaults.container, "mp4");
   assert.equal(merged.concurrency, 5);
   assert.equal(merged.fragments, 1);
+  assert.equal(merged.list_limit, 50);
+  assert.equal(merged.group_limit, 1500);
+  assert.equal(merged.keep_finished, 500);
   assert.equal(merged.notifications, true);
   assert.equal(merged.selectors.watchContainer, "#top-level-buttons-computed");
   assert.equal(merged.selectors.watchInsertion, "last");

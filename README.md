@@ -56,7 +56,7 @@ A **Download playlist** or **Download channel** button in the page header opens 
 - Choose all items or a range such as `1-10,15`.
 - Quality is a maximum; items that don't reach it download at their best.
 - A channel downloads the tab you are on when that is Videos, Shorts or Live, and its Videos tab otherwise.
-- One request takes at most 1000 items, so use a range for bigger channels.
+- The panel lists the first 200 videos, and one download queues at most 1000. "All" on a bigger channel queues the first 1000 and says where the rest start. Both limits are in Options.
 
 ### Clips
 
@@ -88,7 +88,7 @@ Click the toolbar icon for:
 - Helper status, ffmpeg and yt-dlp versions, and an **Update** button when a newer yt-dlp is out.
 - Every job (title and channel) with progress, speed and ETA. Click a title to go back to the video.
 - Pause, resume, cancel and retry. Finished jobs have **Open** and **Show in folder**.
-- **Clear finished** removes finished jobs from the list (the files stay). The list keeps the newest 500 finished jobs, and playlist jobs are grouped with a total.
+- **Clear finished** removes finished jobs from the list (the files stay). The list keeps the newest 500 finished jobs (Options > Finished downloads kept), and playlist jobs are grouped with a total.
 
 The queue lives in memory only, so it is empty after the helper restarts.
 
@@ -114,6 +114,9 @@ Open them from the popup's gear button or `about:addons`.
 | Parallel downloads | 2 | 1 to 5 |
 | Download speed-up | 4 | Fragments fetched at once per download, 1 to 8 |
 | Use Firefox cookies | Off | Passes `--cookies-from-browser firefox` to yt-dlp |
+| Videos listed in the panel | 200 | 50 to 5000. A big channel lists about 40 videos a second, so more makes the panel slower to open |
+| Most videos per download | 1000 | 1 to 2000 for one playlist or channel download |
+| Finished downloads kept | 500 | 50 to 2000. Past it the oldest successful downloads leave the popup; failed ones stay until cleared |
 | Notifications | On | |
 | Auto-update yt-dlp | On | Checks GitHub at most once a day and only updates while nothing is downloading |
 | Page selectors | | Where the buttons go on watch pages and Shorts. Change these if YouTube moves its buttons; **Reset selectors** restores the defaults |
@@ -208,12 +211,12 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 | Method and path | Body or query | Response |
 |---|---|---|
 | `GET /health` | `?nonce=` (optional) | `{status, version, ffmpeg, yt_dlp_version, yt_dlp_latest, update_available, concurrency, fragments, cookies, auto_update, tools: {state, step, percent, error}}`, plus `proof` when a nonce is sent |
-| `GET /info` | `?url=` | `{kind, id, title, uploader, duration, qualities: [{height, codecs, filesize_est}], entry_count, entries}`. 400 bad URL, 502 yt-dlp failure, 503 during setup, 504 after 20s |
-| `POST /jobs` | `{url, options: {kind, quality, codec, container, audio_format, audio_bitrate, max_size_mb, clip_start, clip_end}, items?}` | 202 `{jobs: [Job]}`. 400 bad URL or items, or a clip on a playlist or channel, 422 needs ffmpeg, 503 during setup |
+| `GET /info` | `?url=` | `{kind, id, title, uploader, duration, qualities: [{height, codecs, filesize_est}], entry_count, entries}`. 400 bad URL, 502 yt-dlp failure, 503 during setup, 504 after 20s plus 40 ms per listed entry for a playlist or channel. Lists stop at `list_limit` entries, with `entry_count` null past it |
+| `POST /jobs` | `{url, options: {kind, quality, codec, container, audio_format, audio_bitrate, max_size_mb, clip_start, clip_end}, items?}` | 202 `{jobs: [Job]}`, plus `capped` (videos queued) and `next` (list position the rest start at) when the selection was over `group_limit`. 400 bad URL or items, or a clip on a playlist or channel, 422 needs ffmpeg, 503 during setup |
 | `GET /jobs` | | `{jobs: [Job]}` |
 | `POST /jobs/{id}/{action}` | action: `pause`, `resume`, `cancel`, `retry`, `open`, `reveal` | `{job: Job}`. 404 unknown id, 409 invalid transition or file missing |
-| `DELETE /jobs` | `?finished=true` | `{removed}` (files are kept) |
-| `PUT /settings` | `{concurrency?: 1-5, fragments?: 1-8, cookies?, auto_update?}` | Settings object |
+| `DELETE /jobs` | `?finished=true`, with `&failed=true` to also clear downloads with a failed or cancelled video | `{removed}` (files are kept) |
+| `PUT /settings` | `{concurrency?: 1-5, fragments?: 1-8, cookies?, auto_update?, list_limit?: 50-5000, group_limit?: 1-2000, keep_finished?: 50-2000}` | Settings object |
 | `POST /update` | | `{updated, version}`. 409 while downloads are active |
 | `POST /shutdown` | | `{status: "stopping"}`, then cancels running jobs and exits. Used by install and uninstall |
 

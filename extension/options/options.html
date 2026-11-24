@@ -82,6 +82,31 @@
           </label>
         </section>
 
+        <section class="card">
+          <h2><span class="icon" aria-hidden="true">📂</span>Playlists and channels</h2>
+          <div class="grid">
+            <label
+              >Videos listed in the panel
+              <input type="number" id="list_limit" name="list_limit" min="50" max="5000" step="50" />
+              <span class="hint">50 to 5000. A big channel takes about 1s per 40 videos to list, so more opens slower.</span>
+            </label>
+            <label
+              >Most videos per download
+              <input type="number" id="group_limit" name="group_limit" min="1" max="2000" step="1" />
+              <span class="hint">1 to 2000. "All" on a bigger list queues this many and says where the rest start.</span>
+            </label>
+            <label
+              >Finished downloads kept
+              <input type="number" id="keep_finished" name="keep_finished" min="50" max="2000" step="50" />
+              <span class="hint"
+                >50 to 2000 in the popup. Past this the oldest successful ones leave the list; failed ones stay until cleared.
+                Files are never touched.</span
+              >
+            </label>
+          </div>
+          <p class="hint">Helpers before 2.10.0 ignore these and keep 200, 1000 and 500.</p>
+        </section>
+
         <details class="card collapsible">
           <summary><h2><span class="icon" aria-hidden="true">🧩</span>Advanced: page selectors</h2></summary>
           <p class="hint">Change these only if YouTube moves its buttons and the Download button disappears.</p>

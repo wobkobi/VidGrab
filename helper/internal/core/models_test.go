@@ -72,8 +72,9 @@ func TestDecodeSettingsUpdate(t *testing.T) {
 		body string
 		want SettingsUpdate
 	}{
-		{`{"concurrency":true,"fragments":"3","cookies":"yes","auto_update":1}`, SettingsUpdate{ptr(1), ptr(3), ptr(true), ptr(true)}},
-		{`{"concurrency":3.0,"fragments":" 4 ","cookies":0.0,"auto_update":"0"}`, SettingsUpdate{ptr(3), ptr(4), ptr(false), ptr(false)}},
+		{`{"concurrency":true,"fragments":"3","cookies":"yes","auto_update":1}`, SettingsUpdate{Concurrency: ptr(1), Fragments: ptr(3), Cookies: ptr(true), AutoUpdate: ptr(true)}},
+		{`{"concurrency":3.0,"fragments":" 4 ","cookies":0.0,"auto_update":"0"}`, SettingsUpdate{Concurrency: ptr(3), Fragments: ptr(4), Cookies: ptr(false), AutoUpdate: ptr(false)}},
+		{`{"list_limit":"500","group_limit":1,"keep_finished":2000}`, SettingsUpdate{ListLimit: ptr(500), GroupLimit: ptr(1), KeepFinished: ptr(2000)}},
 		{`{"concurrency":"3.0","cookies":0.0,"auto_update":"YES"}`, SettingsUpdate{Concurrency: ptr(3), Cookies: ptr(false), AutoUpdate: ptr(true)}},
 		{`{}`, SettingsUpdate{}},
 		{`{"concurrency":null,"cookies":null}`, SettingsUpdate{}},
@@ -90,6 +91,7 @@ func TestDecodeSettingsUpdate(t *testing.T) {
 		{`{"concurrency":2.5,"fragments":"x","cookies":[]}`, "body.concurrency: Input should be a valid integer, got a number with a fractional part; body.fragments: Input should be a valid integer, unable to parse string as an integer; body.cookies: Input should be a valid boolean"},
 		{`{"concurrency":1e30,"fragments":"99999999999999999999999"}`, "body.concurrency: Unable to parse input string as an integer, exceeded maximum size; body.fragments: Input should be less than or equal to 8"},
 		{`{"cookies":2.5}`, "body.cookies: Input should be a valid boolean"},
+		{`{"list_limit":10,"group_limit":3000,"keep_finished":"x"}`, "body.list_limit: Input should be greater than or equal to 50; body.group_limit: Input should be less than or equal to 2000; body.keep_finished: Input should be a valid integer, unable to parse string as an integer"},
 		{``, "body: Field required"},
 	}
 	for _, c := range invalid {
@@ -102,10 +104,12 @@ func TestDecodeSettingsUpdate(t *testing.T) {
 
 func TestDecodeSettings(t *testing.T) {
 	got, err := DecodeSettings([]byte(`{"concurrency":3,"cookies":true}`))
-	if err != nil || got != (Settings{Concurrency: 3, Fragments: 4, Cookies: true, AutoUpdate: true}) {
+	want := DefaultSettings()
+	want.Concurrency, want.Cookies = 3, true
+	if err != nil || got != want {
 		t.Fatalf("got %+v, %v", got, err)
 	}
-	for _, body := range []string{`{"concurrency":null}`, `{"fragments":99}`, `[]`, `garbage`} {
+	for _, body := range []string{`{"concurrency":null}`, `{"fragments":99}`, `{"list_limit":null}`, `{"group_limit":0}`, `[]`, `garbage`} {
 		got, err := DecodeSettings([]byte(body))
 		if err == nil || got != DefaultSettings() {
 			t.Errorf("DecodeSettings(%s) = %+v, %v; want defaults and an error", body, got, err)
@@ -114,18 +118,20 @@ func TestDecodeSettings(t *testing.T) {
 }
 
 func TestSettingsApplyAndJSON(t *testing.T) {
-	merged := DefaultSettings().Apply(SettingsUpdate{Fragments: ptr(8), AutoUpdate: ptr(false)})
+	merged := DefaultSettings().Apply(SettingsUpdate{Fragments: ptr(8), AutoUpdate: ptr(false), GroupLimit: ptr(50)})
 	data, err := json.Marshal(merged)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"concurrency":2,"fragments":8,"cookies":false,"auto_update":false}` {
+	if string(data) != `{"concurrency":2,"fragments":8,"cookies":false,"auto_update":false,"list_limit":200,"group_limit":50,"keep_finished":500}` {
 		t.Fatalf("json = %s", data)
 	}
 	if merged.Validate() != nil {
 		t.Fatal("merged settings should be valid")
 	}
-	if err := (Settings{Concurrency: 0, Fragments: 9}).Validate(); err == nil || err.Error() != "concurrency: Input should be greater than or equal to 1; fragments: Input should be less than or equal to 8" {
+	bad := DefaultSettings()
+	bad.Concurrency, bad.Fragments, bad.KeepFinished = 0, 9, 10
+	if err := bad.Validate(); err == nil || err.Error() != "concurrency: Input should be greater than or equal to 1; fragments: Input should be less than or equal to 8; keep_finished: Input should be greater than or equal to 50" {
 		t.Fatalf("Validate = %v", err)
 	}
 }

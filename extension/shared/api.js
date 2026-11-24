@@ -10,6 +10,9 @@ YTDL.api = (function () {
   // Creating jobs for a playlist or channel lists its entries first, which the backend allows 120s
   // for. The update downloads a new yt-dlp build, so it gets over five minutes on a slow link.
   const TIMEOUTS = {health: 2000, info: 25000, jobs: 5000, create: 130000, update: 320000};
+  // The backend gives a playlist or channel listing 40 ms more per entry it lists (its
+  // ListEntryTime), so the wait here grows by the same amount
+  const INFO_MS_PER_ENTRY = 40;
 
   // Install token from the native host; sent on every call except /health
   let token = null;
@@ -154,7 +157,8 @@ YTDL.api = (function () {
     },
     health: (nonce) =>
       request("GET", nonce ? `/health?nonce=${encodeURIComponent(nonce)}` : "/health", {timeout: TIMEOUTS.health, noToken: true}),
-    info: (url) => request("GET", `/info?url=${encodeURIComponent(url)}`, {timeout: TIMEOUTS.info}),
+    info: (url, listLimit = 0) =>
+      request("GET", `/info?url=${encodeURIComponent(url)}`, {timeout: TIMEOUTS.info + listLimit * INFO_MS_PER_ENTRY}),
     createJobs: (url, options, items) => {
       const body = {url, options};
       if (items) body.items = items;
