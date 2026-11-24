@@ -211,7 +211,7 @@ The helper listens on `127.0.0.1` only, on a port picked at random (20000 to 327
 | Method and path | Body or query | Response |
 |---|---|---|
 | `GET /health` | `?nonce=` (optional) | `{status, version, ffmpeg, yt_dlp_version, yt_dlp_latest, update_available, concurrency, fragments, cookies, auto_update, tools: {state, step, percent, error}}`, plus `proof` when a nonce is sent |
-| `GET /info` | `?url=` | `{kind, id, title, uploader, duration, qualities: [{height, codecs, filesize_est}], entry_count, entries}`. 400 bad URL, 502 yt-dlp failure, 503 during setup, 504 after 20s plus 40 ms per listed entry for a playlist or channel. Lists stop at `list_limit` entries, with `entry_count` null past it |
+| `GET /info` | `?url=` | `{kind, id, title, uploader, duration, qualities: [{height, codecs, filesize_est}], entry_count, entries}`. 400 bad URL, 502 yt-dlp failure, 503 during setup, 504 after 20s plus 40 ms per `list_limit` entry for a playlist or channel. Lists stop at `list_limit` entries, with `entry_count` null past it |
 | `POST /jobs` | `{url, options: {kind, quality, codec, container, audio_format, audio_bitrate, max_size_mb, clip_start, clip_end}, items?}` | 202 `{jobs: [Job]}`, plus `capped` (videos queued) and `next` (list position the rest start at) when the selection was over `group_limit`. 400 bad URL or items, or a clip on a playlist or channel, 422 needs ffmpeg, 503 during setup |
 | `GET /jobs` | | `{jobs: [Job]}` |
 | `POST /jobs/{id}/{action}` | action: `pause`, `resume`, `cancel`, `retry`, `open`, `reveal` | `{job: Job}`. 404 unknown id, 409 invalid transition or file missing |

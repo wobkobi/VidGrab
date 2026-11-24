@@ -514,8 +514,8 @@ function isText(value) {
 }
 
 /**
- * Return cached /info data for a URL, dropping expired entries.
- * @param {string} url - Page URL.
+ * Return cached /info data, dropping expired entries.
+ * @param {string} url - Cache key: the list limit and page URL.
  * @returns {object|null} Cached /info body, or null.
  */
 function cachedInfo(url) {
@@ -530,7 +530,7 @@ function cachedInfo(url) {
 
 /**
  * Cache an /info body, evicting the oldest entry once the cache is full.
- * @param {string} url - Page URL.
+ * @param {string} url - Cache key: the list limit and page URL.
  * @param {object} data - /info body.
  */
 function storeInfo(url, data) {
@@ -553,10 +553,13 @@ const HANDLERS = {
 
   async info(message) {
     if (!isText(message.url)) return {ok: false, error: "Missing URL", status: 400};
-    const hit = cachedInfo(message.url);
+    // Keyed on the list limit too, so a listing cut at an older limit never answers for a new one
+    const listLimit = settings.list_limit;
+    const key = `${listLimit} ${message.url}`;
+    const hit = cachedInfo(key);
     if (hit) return {ok: true, data: hit};
-    const res = await withBackend(() => api.info(message.url, settings.list_limit));
-    if (res.ok) storeInfo(message.url, res.data);
+    const res = await withBackend(() => api.info(message.url, listLimit));
+    if (res.ok) storeInfo(key, res.data);
     return res;
   },
 
@@ -609,9 +612,10 @@ const HANDLERS = {
   async settingsChanged() {
     const listLimit = settings.list_limit;
     await loadSettings();
-    // Cached listings were cut at the old limit
-    if (settings.list_limit !== listLimit) infoCache.clear();
     const pushed = state.backend.reachable ? await pushSettings() : false;
+    // A listing asked for before the helper took the new limit came back cut at the old one
+    // but is keyed on the new one
+    if (settings.list_limit !== listLimit) infoCache.clear();
     return {ok: true, data: {pushed}};
   },
 };

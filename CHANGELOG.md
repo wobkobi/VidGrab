@@ -25,7 +25,8 @@ All notable changes to this project are documented here. The format follows
 - **Playlists and channels:** The Download playlist and Download channel buttons match YouTube's
   own buttons, sit beside them when there is room and take their own row when there isn't.
 - **Playlists and channels:** Choosing a range on a big channel lists only the videos in that
-  range, so it starts in seconds instead of timing out. The options panel lists the first 200 videos by default.
+  range, so it starts in seconds instead of timing out. The options panel lists the first 200
+  videos by default.
 - **Popup:** Clear finished keeps cards with a failed video, then becomes Clear failed to remove
   them. Cards are cleared whole, never part of a playlist.
 - **Watch page:** The Download button keeps one width through a whole download, so YouTube's

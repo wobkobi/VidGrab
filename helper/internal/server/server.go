@@ -176,9 +176,18 @@ func (s *settingsStore) update(changes core.SettingsUpdate) core.Settings {
 	return s.current
 }
 
+// cacheKey names an /info summary by the settings it was fetched under. The list limit is part
+// of it, so a listing still running when list_limit changes is cached under the old limit and
+// never answers for the new one.
 type cacheKey struct {
-	url     string
-	cookies bool
+	url       string
+	cookies   bool
+	listLimit int
+}
+
+// keyFor is the cache key for a canonical URL under the given settings.
+func keyFor(canonical string, settings core.Settings) cacheKey {
+	return cacheKey{canonical, settings.Cookies, settings.ListLimit}
 }
 
 type cacheEntry struct {
@@ -335,11 +344,11 @@ func (s *Server) fetchWithTools(ctx context.Context, url string, flat bool, item
 }
 
 // cachedInfo returns the unexpired /info summary for a canonical URL under the current cookies
-// setting, without calling yt-dlp.
+// and list_limit settings, without calling yt-dlp.
 func (s *Server) cachedInfo(canonical string) (core.Info, bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	hit, ok := s.cache[cacheKey{canonical, s.settings.get().Cookies}]
+	hit, ok := s.cache[keyFor(canonical, s.settings.get())]
 	if !ok || time.Since(hit.at) >= InfoCacheTTL {
 		return core.Info{}, false
 	}
@@ -353,14 +362,14 @@ func (s *Server) cachedInfo(canonical string) (core.Info, bool) {
 // setting. When that extra entry comes back the list is longer than limit: the summary keeps
 // the first limit entries and a nil EntryCount (null to the add-on, which then shows no
 // count), and a nil EntryCount is what keeps job creation from treating the cached listing as
-// complete. A change to list_limit clears the cache, so a cached summary always matches it.
+// complete. The cache key holds the limit, so a cached summary always matches the current one.
 func (s *Server) info(ctx context.Context, parsed core.ParsedUrl) (core.Info, error) {
 	if summary, ok := s.cachedInfo(parsed.Canonical); ok {
 		return summary, nil
 	}
 	settings := s.settings.get()
 	cookies, limit := settings.Cookies, settings.ListLimit
-	key := cacheKey{parsed.Canonical, cookies}
+	key := keyFor(parsed.Canonical, settings)
 	list := parsed.Kind != core.KindVideo
 	items := ""
 	if list {
@@ -422,7 +431,7 @@ func (s *Server) evictLocked(now time.Time) {
 func (s *Server) cachedTitle(canonical string) string {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	hit, ok := s.cache[cacheKey{canonical, s.settings.get().Cookies}]
+	hit, ok := s.cache[keyFor(canonical, s.settings.get())]
 	if !ok {
 		return ""
 	}
@@ -912,13 +921,8 @@ func (s *Server) handlePutSettings(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, decodeError(err)
 	}
-	before := s.settings.get().ListLimit
 	settings := s.settings.update(changes)
 	s.queue.ApplySettings(settings)
-	// Cached listings were cut at the old limit
-	if settings.ListLimit != before {
-		s.clearInfoCache()
-	}
 	return http.StatusOK, settings, nil
 }
 
@@ -1133,7 +1137,8 @@ func autoUpdate(ctx context.Context, tools ToolsState, updater *system.Updater, 
 	updater.AutoUpdate(ctx, enabled)
 }
 
-// listTimeout bounds an /info call that lists up to limit playlist or channel entries.
+// listTimeout bounds an /info call for a playlist or channel under the given list_limit,
+// however long the list really is.
 func listTimeout(limit int) time.Duration {
 	return core.InfoTimeout + time.Duration(limit)*ListEntryTime
 }

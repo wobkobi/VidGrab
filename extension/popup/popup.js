@@ -340,7 +340,7 @@ function setCollapsed(block, collapsed) {
  */
 async function runGroupAction(jobs, action, button) {
   button.disabled = true;
-  // A channel can hold 1000 jobs. All at once, the requests queue behind Firefox's few
+  // A channel can hold 2000 jobs. All at once, the requests queue behind Firefox's few
   // connections per host and the later ones time out, so they go GROUP_ACTION_BATCH at a time.
   // Running jobs are cancelled last: cancelling one frees a slot, which would start a queued
   // job only for its own cancel to kill it moments later.
