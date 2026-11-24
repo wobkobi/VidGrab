@@ -59,16 +59,20 @@ func clipArgs(opts JobOptions) []string {
 // the last " [id]" is removed, so a title with brackets of its own (even its own id in them)
 // keeps them. ok is false, and base comes back unchanged, when the marker is missing or no
 // usable title would be left.
+//
+// Trailing dots and spaces of the title go too: a title ending in "." would otherwise give
+// "Title..mp4" once the extension follows, and Windows drops them from a name's end anyway.
 func StripID(base, id string) (stem string, ok bool) {
 	marker := " [" + id + "]"
 	if id == "" || !strings.HasSuffix(base, marker) {
 		return base, false
 	}
 	stem = strings.TrimSuffix(base, marker)
+	// The name keeps at least one other character, so trimming never reaches the folder
 	if _, name := filepath.Split(stem); strings.Trim(name, " .") == "" {
 		return base, false
 	}
-	return stem, true
+	return strings.TrimRight(stem, " ."), true
 }
 
 // SamePath reports whether two paths name the same file as yt-dlp prints them: equal once
@@ -340,9 +344,17 @@ func downloadPrefix(outDir, template string, cookies bool, fragments int, tools 
 // entries without resolving each video. Numbers are decoded as json.Number so integer fields
 // stay distinguishable from floats.
 //
+// items, when not "", is a --playlist-items spec ("1-4,15", see FormatItems) for a flat
+// listing: yt-dlp then pages through the list only as far as the highest item instead of
+// listing all of it, which on a channel with thousands of videos is the difference between
+// seconds and minutes. The JSON then holds only the entries in range, in list order, and
+// "requested_entries" gives each one's 1-based position in the whole list (the flat entries
+// carry no playlist_index of their own). An item past the end of the list is left out, so a
+// spec entirely past it gives no entries.
+//
 // Callers bound ctx (normally with InfoTimeout). When ctx's deadline passes the error is a
 // *YtDlpTimeout; every other failure is a *YtDlpError.
-func FetchRawInfo(ctx context.Context, tools Tools, url string, flat, cookies bool, run Runner) (map[string]any, error) {
+func FetchRawInfo(ctx context.Context, tools Tools, url string, flat bool, items string, cookies bool, run Runner) (map[string]any, error) {
 	if run == nil {
 		run = DefaultRunner
 	}
@@ -350,6 +362,9 @@ func FetchRawInfo(ctx context.Context, tools Tools, url string, flat, cookies bo
 	args = append(args, "-J", "--no-warnings")
 	if flat {
 		args = append(args, "--flat-playlist")
+		if items != "" {
+			args = append(args, "--playlist-items", items)
+		}
 	} else {
 		args = append(args, "--no-playlist")
 	}

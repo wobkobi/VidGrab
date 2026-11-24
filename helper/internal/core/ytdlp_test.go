@@ -378,6 +378,9 @@ func TestStripID(t *testing.T) {
 		{"Clip[jNQXAC9IVRw]", "Clip[jNQXAC9IVRw]", false},
 		{" [jNQXAC9IVRw]", " [jNQXAC9IVRw]", false},
 		{". [jNQXAC9IVRw]", ". [jNQXAC9IVRw]", false},
+		{"...and then they die. [jNQXAC9IVRw]", "...and then they die", true},
+		{"Wait for it . .  [jNQXAC9IVRw]", "Wait for it", true},
+		{"v1.2 [jNQXAC9IVRw]", "v1.2", true},
 	}
 	for _, c := range cases {
 		got, ok := StripID(filepath.Join(dir, c.base), "jNQXAC9IVRw")
@@ -575,7 +578,7 @@ func TestFetchRawInfoSuccessAndFlags(t *testing.T) {
 		return `{"id": "x"}`, "", 0, nil
 	}
 	tools := Tools{YtDlp: "yt-dlp.exe", FfmpegDir: `C:\ff`}
-	raw, err := FetchRawInfo(context.Background(), tools, testURL, true, true, runner)
+	raw, err := FetchRawInfo(context.Background(), tools, testURL, true, "", true, runner)
 	if err != nil || !reflect.DeepEqual(raw, map[string]any{"id": "x"}) {
 		t.Fatalf("raw %v, %v", raw, err)
 	}
@@ -583,14 +586,23 @@ func TestFetchRawInfoSuccessAndFlags(t *testing.T) {
 	if first[0] != "yt-dlp.exe" || !slices.Contains(first, "--flat-playlist") || !slices.Contains(first, "-J") || !slices.Contains(first, "--cookies-from-browser") {
 		t.Errorf("argv %v", first)
 	}
+	if slices.Contains(first, "--playlist-items") {
+		t.Errorf("full listing limited: %v", first)
+	}
 	if valueAfter(t, first, "--ffmpeg-location") != `C:\ff` || !reflect.DeepEqual(first[len(first)-2:], []string{"--", testURL}) {
 		t.Errorf("argv %v", first)
 	}
-	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, false, runner); err != nil {
+	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, "1-4", false, runner); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(calls[1], "--no-playlist") || slices.Contains(calls[1], "--ffmpeg-location") {
+	if !slices.Contains(calls[1], "--no-playlist") || slices.Contains(calls[1], "--ffmpeg-location") || slices.Contains(calls[1], "--playlist-items") {
 		t.Errorf("argv %v", calls[1])
+	}
+	if _, err := FetchRawInfo(context.Background(), testTools, testURL, true, "1-10,15", false, runner); err != nil {
+		t.Fatal(err)
+	}
+	if valueAfter(t, calls[2], "--playlist-items") != "1-10,15" || !reflect.DeepEqual(calls[2][len(calls[2])-2:], []string{"--", testURL}) {
+		t.Errorf("argv %v", calls[2])
 	}
 }
 
@@ -598,7 +610,7 @@ func TestFetchRawInfoErrors(t *testing.T) {
 	failing := func(context.Context, []string) (string, string, int, error) {
 		return "", "WARNING: x\nERROR: [youtube] abc: Private video", 1, nil
 	}
-	_, err := FetchRawInfo(context.Background(), testTools, testURL, false, false, failing)
+	_, err := FetchRawInfo(context.Background(), testTools, testURL, false, "", false, failing)
 	var ytErr *YtDlpError
 	var timeout *YtDlpTimeout
 	if !errors.As(err, &ytErr) || ytErr.Message != "Private video" || ytErr.Detail != "WARNING: x\nERROR: [youtube] abc: Private video" || errors.As(err, &timeout) {
@@ -606,7 +618,7 @@ func TestFetchRawInfoErrors(t *testing.T) {
 	}
 
 	silent := func(context.Context, []string) (string, string, int, error) { return "", "", 2, nil }
-	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, false, silent); err == nil || err.Error() != "yt-dlp failed" {
+	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, "", false, silent); err == nil || err.Error() != "yt-dlp failed" {
 		t.Errorf("silent: %v", err)
 	}
 
@@ -616,7 +628,7 @@ func TestFetchRawInfoErrors(t *testing.T) {
 		<-ctx.Done()
 		return "", "", -1, ctx.Err()
 	}
-	_, err = FetchRawInfo(ctx, testTools, testURL, false, false, slow)
+	_, err = FetchRawInfo(ctx, testTools, testURL, false, "", false, slow)
 	if !errors.As(err, &timeout) || timeout.Message != "YouTube took too long to answer" || !errors.As(err, &ytErr) {
 		t.Errorf("slow: %#v", err)
 	}
@@ -624,13 +636,13 @@ func TestFetchRawInfoErrors(t *testing.T) {
 	missing := func(context.Context, []string) (string, string, int, error) {
 		return "", "", -1, errors.New("exec: not found")
 	}
-	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, false, missing); !errors.As(err, &ytErr) || ytErr.Message != "Could not run yt-dlp" || ytErr.Detail != "exec: not found" {
+	if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, "", false, missing); !errors.As(err, &ytErr) || ytErr.Message != "Could not run yt-dlp" || ytErr.Detail != "exec: not found" {
 		t.Errorf("missing: %#v", err)
 	}
 
 	for _, out := range []string{"not json", "[1]", "null", `{"id": 1} trailing`} {
 		garbage := func(context.Context, []string) (string, string, int, error) { return out, "", 0, nil }
-		if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, false, garbage); err == nil || err.Error() != "yt-dlp returned unreadable data" {
+		if _, err := FetchRawInfo(context.Background(), testTools, testURL, false, "", false, garbage); err == nil || err.Error() != "yt-dlp returned unreadable data" {
 			t.Errorf("garbage %q: %v", out, err)
 		}
 	}

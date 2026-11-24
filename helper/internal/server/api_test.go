@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,8 +48,9 @@ func playlistRaw() map[string]any {
 }
 
 type fetchCall struct {
-	url  string
-	flat bool
+	url   string
+	flat  bool
+	items string
 }
 
 // fakeFetcher replaces yt-dlp -J: it records calls and can fail on demand.
@@ -55,19 +58,49 @@ type fakeFetcher struct {
 	mu    sync.Mutex
 	calls []fetchCall
 	err   error
+	// long, when above 0, replaces the 3-entry playlist with one of that many entries
+	long int
 }
 
-func (f *fakeFetcher) fetch(_ context.Context, url string, flat, _ bool) (map[string]any, error) {
+func (f *fakeFetcher) fetch(_ context.Context, url string, flat bool, items string, _ bool) (map[string]any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fetchCall{url, flat})
+	f.calls = append(f.calls, fetchCall{url, flat, items})
 	if f.err != nil {
 		return nil, f.err
 	}
-	if flat {
-		return playlistRaw(), nil
+	if !flat {
+		return videoRaw(), nil
 	}
-	return videoRaw(), nil
+	raw := playlistRaw()
+	if f.long > 0 {
+		entries := make([]any, f.long)
+		for i := range entries {
+			entries[i] = map[string]any{"id": fmt.Sprintf("v%010d", i+1), "title": strconv.Itoa(i + 1)}
+		}
+		raw["entries"] = entries
+	}
+	if items != "" {
+		limitListing(raw, items)
+	}
+	return raw, nil
+}
+
+// limitListing cuts a flat listing down the way yt-dlp --playlist-items does: only the
+// entries in range stay, and "requested_entries" names their positions.
+func limitListing(raw map[string]any, items string) {
+	ranges, err := core.ParseItems(items)
+	if err != nil {
+		panic(err)
+	}
+	kept, positions := []any{}, []any{}
+	for i, e := range raw["entries"].([]any) {
+		if core.InRanges(i+1, ranges) {
+			kept = append(kept, e)
+			positions = append(positions, json.Number(strconv.Itoa(i+1)))
+		}
+	}
+	raw["entries"], raw["requested_entries"] = kept, positions
 }
 
 func (f *fakeFetcher) setErr(err error) {
@@ -517,7 +550,7 @@ func TestInfoVideoAndCache(t *testing.T) {
 		t.Fatalf("height %v", h)
 	}
 	e.get(infoURL(videoURL))
-	if calls := e.fetcher.recorded(); !slices.Equal(calls, []fetchCall{{videoURL, false}}) {
+	if calls := e.fetcher.recorded(); !slices.Equal(calls, []fetchCall{{videoURL, false, ""}}) {
 		t.Fatalf("calls %v", calls)
 	}
 }
@@ -538,8 +571,39 @@ func TestInfoPlaylist(t *testing.T) {
 	if body["kind"] != "playlist" || body["entry_count"] != 3.0 {
 		t.Fatalf("body %v", body)
 	}
-	if calls := e.fetcher.recorded(); !slices.Equal(calls, []fetchCall{{playlistURL, true}}) {
+	if calls := e.fetcher.recorded(); !slices.Equal(calls, []fetchCall{{playlistURL, true, "1-201"}}) {
 		t.Fatalf("calls %v", calls)
+	}
+}
+
+func TestInfoListLengthBound(t *testing.T) {
+	for _, tc := range []struct {
+		long  int
+		count any
+		shown int
+	}{
+		{InfoListMax, float64(InfoListMax), InfoListMax},
+		{InfoListMax + 1, nil, InfoListMax},
+		{5000, nil, InfoListMax},
+	} {
+		e := newEnv(t)
+		e.fetcher.long = tc.long
+		body := e.get(infoURL(playlistURL)).json(t)
+		count, present := body["entry_count"]
+		if !present || count != tc.count || len(body["entries"].([]any)) != tc.shown || body["title"] != "Stories" {
+			t.Errorf("%d entries: entry_count %v, %d entries shown", tc.long, count, len(body["entries"].([]any)))
+		}
+		// The cached summary answers /info again, but only a complete one stands in for the
+		// listing a download needs
+		e.get(infoURL(playlistURL))
+		expectStatus(t, e.post("/jobs", map[string]any{"url": playlistURL, "items": "1-2"}), 202)
+		want := []fetchCall{{playlistURL, true, "1-201"}}
+		if tc.count == nil {
+			want = append(want, fetchCall{playlistURL, true, "1-2"})
+		}
+		if calls := e.fetcher.recorded(); !slices.Equal(calls, want) {
+			t.Errorf("%d entries: calls %v", tc.long, calls)
+		}
 	}
 }
 
@@ -626,8 +690,28 @@ func TestCreatePlaylistReusesCachedListing(t *testing.T) {
 	e := newEnv(t)
 	e.get(infoURL(playlistURL))
 	expectStatus(t, e.post("/jobs", map[string]any{"url": playlistURL}), 202)
+	expectStatus(t, e.post("/jobs", map[string]any{"url": playlistURL, "items": "2"}), 202)
 	if n := len(e.fetcher.recorded()); n != 1 {
 		t.Fatalf("%d fetches, want 1", n)
+	}
+}
+
+func TestCreatePlaylistListsOnlyItemsInRange(t *testing.T) {
+	e := newEnv(t)
+	resp := e.post("/jobs", map[string]any{"url": playlistURL, "items": "3, 1"})
+	expectStatus(t, resp, 202)
+	jobs := resp.json(t)["jobs"].([]any)
+	if len(jobs) != 2 || jobs[0].(map[string]any)["title"] != "A" || jobs[1].(map[string]any)["title"] != "C" {
+		t.Fatalf("jobs %s", resp.body)
+	}
+	expectStatus(t, e.post("/jobs", map[string]any{"url": playlistURL}), 202)
+	// The limited listings stay out of the /info cache, so /info still lists every entry
+	if body := e.get(infoURL(playlistURL)).json(t); body["entry_count"] != 3.0 {
+		t.Fatalf("info %v", body)
+	}
+	want := []fetchCall{{playlistURL, true, "1,3"}, {playlistURL, true, "1-1001"}, {playlistURL, true, "1-201"}}
+	if calls := e.fetcher.recorded(); !slices.Equal(calls, want) {
+		t.Fatalf("calls %v", calls)
 	}
 }
 
@@ -812,6 +896,8 @@ func TestClearFinished(t *testing.T) {
 		t.Fatalf("body %s", resp.body)
 	}
 	expectStatus(t, e.do("DELETE", "/jobs?finished=maybe", nil, nil), 400)
+	expectStatus(t, e.do("DELETE", "/jobs?finished=true&failed=maybe", nil, nil), 400)
+	expectStatus(t, e.do("DELETE", "/jobs?finished=true&failed=true", nil, nil), 200)
 	expectStatus(t, e.do("DELETE", "/jobs?finished=yes", nil, nil), 200)
 }
 

@@ -95,7 +95,7 @@ func TestAudioTitleWithBracketsKeepsThem(t *testing.T) {
 
 func TestPlaylistItemsAreRenamed(t *testing.T) {
 	dir := t.TempDir()
-	fetcher := func(string) (map[string]any, error) {
+	fetcher := func(string, []core.ItemRange) (map[string]any, error) {
 		return map[string]any{"title": "List", "entries": []any{map[string]any{"id": videos[0], "title": "A"}}}, nil
 	}
 	q := makeQueue(t, dir, writingStarter(t, "A", "mp4"), func(c *QueueConfig) { c.FetchInfo = fetcher })
