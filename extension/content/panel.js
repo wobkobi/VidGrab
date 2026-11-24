@@ -615,7 +615,7 @@ ${detail}`);
     if (capped) {
       // next is where the left-out videos start; it is capped + 1 only for a selection from 1
       const next = Number.isInteger(res.data.next) ? res.data.next : capped + 1;
-      setStatus(`Added the first ${capped} videos, the most one download can queue. Download the rest as a range starting at ${next}.`, "success");
+      setStatus(`Added the first ${capped === 1 ? "video" : `${capped} videos`}, the most one download can queue. Download the rest as a range starting at ${next}.`, "success");
     } else {
       setStatus(count === 1 ? "Added to the queue" : `Added ${count} downloads to the queue`, "success");
     }

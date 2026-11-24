@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format follows
   cancelled videos, and Pause all, Resume all, Cancel all and Retry for the whole list.
 - **Playlists and channels:** "All" on a channel with more than 1000 videos queues the newest 1000
   and says where the rest start, instead of refusing.
+- **Options:** A Playlists and channels section sets how many videos the panel lists (200 by
+  default, up to 5000), the most one download queues (1000, up to 2000) and how many finished
+  downloads the popup keeps (500, up to 2000).
 - **Popup:** Private and members-only errors say that turning on Use Firefox cookies helps when
   the signed-in account has access.
 
@@ -22,7 +25,8 @@ All notable changes to this project are documented here. The format follows
 - **Playlists and channels:** The Download playlist and Download channel buttons match YouTube's
   own buttons, sit beside them when there is room and take their own row when there isn't.
 - **Playlists and channels:** Choosing a range on a big channel lists only the videos in that
-  range, so it starts in seconds instead of timing out. The options panel lists up to 200 videos.
+  range, so it starts in seconds instead of timing out. The options panel lists the first 200
+  videos by default.
 - **Popup:** Clear finished keeps cards with a failed video, then becomes Clear failed to remove
   them. Cards are cleared whole, never part of a playlist.
 - **Watch page:** The Download button keeps one width through a whole download, so YouTube's

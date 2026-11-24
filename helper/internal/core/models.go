@@ -39,6 +39,15 @@ const (
 	MaxConcurrency = 5
 	MinFragments   = 1
 	MaxFragments   = 8
+	// Settings.ListLimit bounds: how many videos /info lists for a playlist or channel
+	MinListLimit = 50
+	MaxListLimit = 5000
+	// Settings.GroupLimit bounds: how many videos one playlist or channel download may queue
+	MinGroupLimit = 1
+	MaxGroupLimit = 2000
+	// Settings.KeepFinished bounds: how many complete jobs the queue remembers
+	MinKeepFinished = 50
+	MaxKeepFinished = 2000
 	// MaxSizeLimitMB bounds JobOptions.MaxSizeMB; 0 turns the size limit off.
 	MaxSizeLimitMB = 4000
 	// MaxClipSeconds bounds JobOptions.ClipStart and ClipEnd (100 hours, past any real video).
@@ -132,14 +141,23 @@ type Settings struct {
 	Fragments   int  `json:"fragments"`
 	Cookies     bool `json:"cookies"`
 	AutoUpdate  bool `json:"auto_update"`
+	// ListLimit is how many videos /info lists for a playlist or channel
+	ListLimit int `json:"list_limit"`
+	// GroupLimit is how many videos one playlist or channel download queues at most
+	GroupLimit int `json:"group_limit"`
+	// KeepFinished is how many complete jobs the queue remembers before forgetting the oldest
+	KeepFinished int `json:"keep_finished"`
 }
 
 // SettingsUpdate is the body of PUT /settings; only non-nil fields are changed.
 type SettingsUpdate struct {
-	Concurrency *int  `json:"concurrency,omitempty"`
-	Fragments   *int  `json:"fragments,omitempty"`
-	Cookies     *bool `json:"cookies,omitempty"`
-	AutoUpdate  *bool `json:"auto_update,omitempty"`
+	Concurrency  *int  `json:"concurrency,omitempty"`
+	Fragments    *int  `json:"fragments,omitempty"`
+	Cookies      *bool `json:"cookies,omitempty"`
+	AutoUpdate   *bool `json:"auto_update,omitempty"`
+	ListLimit    *int  `json:"list_limit,omitempty"`
+	GroupLimit   *int  `json:"group_limit,omitempty"`
+	KeepFinished *int  `json:"keep_finished,omitempty"`
 }
 
 // DefaultJobOptions returns the options used for any field the request leaves out.
@@ -149,7 +167,7 @@ func DefaultJobOptions() JobOptions {
 
 // DefaultSettings returns the settings used before the extension pushes any.
 func DefaultSettings() Settings {
-	return Settings{Concurrency: 2, Fragments: 4, Cookies: false, AutoUpdate: true}
+	return Settings{Concurrency: 2, Fragments: 4, Cookies: false, AutoUpdate: true, ListLimit: 200, GroupLimit: 1000, KeepFinished: 500}
 }
 
 // Apply returns s with every field present in u replaced.
@@ -165,6 +183,15 @@ func (s Settings) Apply(u SettingsUpdate) Settings {
 	}
 	if u.AutoUpdate != nil {
 		s.AutoUpdate = *u.AutoUpdate
+	}
+	if u.ListLimit != nil {
+		s.ListLimit = *u.ListLimit
+	}
+	if u.GroupLimit != nil {
+		s.GroupLimit = *u.GroupLimit
+	}
+	if u.KeepFinished != nil {
+		s.KeepFinished = *u.KeepFinished
 	}
 	return s
 }
@@ -286,12 +313,31 @@ func checkClipOrder(v *validator, loc []string, o JobOptions) {
 	}
 }
 
-// Validate checks the concurrency and fragments bounds.
+// Validate checks every numeric setting against its bounds.
 func (s Settings) Validate() error {
 	var v validator
-	checkBounds(&v, []string{"concurrency"}, float64(s.Concurrency), MinConcurrency, MaxConcurrency)
-	checkBounds(&v, []string{"fragments"}, float64(s.Fragments), MinFragments, MaxFragments)
+	for _, b := range settingBounds(&s) {
+		checkBounds(&v, []string{b.name}, float64(*b.value), b.lo, b.hi)
+	}
 	return v.err()
+}
+
+// settingBound ties a numeric setting's JSON name to its field and bounds.
+type settingBound struct {
+	name   string
+	value  *int
+	lo, hi int
+}
+
+// settingBounds lists the numeric fields of s with their bounds; the pointers write into s.
+func settingBounds(s *Settings) []settingBound {
+	return []settingBound{
+		{"concurrency", &s.Concurrency, MinConcurrency, MaxConcurrency},
+		{"fragments", &s.Fragments, MinFragments, MaxFragments},
+		{"list_limit", &s.ListLimit, MinListLimit, MaxListLimit},
+		{"group_limit", &s.GroupLimit, MinGroupLimit, MaxGroupLimit},
+		{"keep_finished", &s.KeepFinished, MinKeepFinished, MaxKeepFinished},
+	}
 }
 
 func checkBounds(v *validator, loc []string, value float64, lo, hi int) bool {
@@ -566,14 +612,18 @@ func DecodeSettingsUpdate(data []byte) (SettingsUpdate, error) {
 	if !ok {
 		return update, v.err()
 	}
-	if raw, present := fields["concurrency"]; present && !isNull(raw) {
-		if n, ok := decodeInt(&v, []string{"body", "concurrency"}, raw, MinConcurrency, MaxConcurrency); ok {
-			update.Concurrency = &n
-		}
+	// Decode into a full Settings, then keep only the fields the body named
+	var decoded Settings
+	targets := map[string]**int{
+		"concurrency": &update.Concurrency, "fragments": &update.Fragments, "list_limit": &update.ListLimit,
+		"group_limit": &update.GroupLimit, "keep_finished": &update.KeepFinished,
 	}
-	if raw, present := fields["fragments"]; present && !isNull(raw) {
-		if n, ok := decodeInt(&v, []string{"body", "fragments"}, raw, MinFragments, MaxFragments); ok {
-			update.Fragments = &n
+	for _, b := range settingBounds(&decoded) {
+		if raw, present := fields[b.name]; present && !isNull(raw) {
+			if n, ok := decodeInt(&v, []string{"body", b.name}, raw, b.lo, b.hi); ok {
+				*b.value = n
+				*targets[b.name] = b.value
+			}
 		}
 	}
 	if raw, present := fields["cookies"]; present && !isNull(raw) {
@@ -601,14 +651,11 @@ func DecodeSettings(data []byte) (Settings, error) {
 	if !ok {
 		return DefaultSettings(), v.err()
 	}
-	if raw, present := fields["concurrency"]; present {
-		if n, ok := decodeInt(&v, []string{"concurrency"}, raw, MinConcurrency, MaxConcurrency); ok {
-			settings.Concurrency = n
-		}
-	}
-	if raw, present := fields["fragments"]; present {
-		if n, ok := decodeInt(&v, []string{"fragments"}, raw, MinFragments, MaxFragments); ok {
-			settings.Fragments = n
+	for _, b := range settingBounds(&settings) {
+		if raw, present := fields[b.name]; present {
+			if n, ok := decodeInt(&v, []string{b.name}, raw, b.lo, b.hi); ok {
+				*b.value = n
+			}
 		}
 	}
 	if raw, present := fields["cookies"]; present {

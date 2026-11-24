@@ -11,6 +11,14 @@ const customSizeLabel = document.getElementById("max-size-custom");
 
 const DEFAULT_FIELDS = ["kind", "quality", "codec", "container", "audio_format", "audio_bitrate"];
 const SELECTOR_FIELDS = ["watchContainer", "watchInsertion", "shortsBar"];
+// Whole-number settings and the names their range errors use
+const NUMBER_FIELDS = {
+  concurrency: "Parallel downloads",
+  fragments: "Download speed-up",
+  list_limit: "Videos listed in the panel",
+  group_limit: "Most videos per download",
+  keep_finished: "Finished downloads kept",
+};
 const SELECT_OPTIONS = {
   kind: constants.KINDS,
   quality: constants.QUALITIES,
@@ -106,8 +114,7 @@ function fillForm(settings) {
   field("max_size").value = constants.maxSizeChoice(size);
   field("max_size_custom").value = field("max_size").value === constants.MAX_SIZE_CUSTOM ? String(size) : "";
   for (const key of SELECTOR_FIELDS) field(key).value = settings.selectors[key];
-  field("concurrency").value = settings.concurrency;
-  field("fragments").value = settings.fragments;
+  for (const key of Object.keys(NUMBER_FIELDS)) field(key).value = settings[key];
   field("cookies").checked = settings.cookies;
   field("notifications").checked = settings.notifications;
   field("auto_update").checked = settings.auto_update;
@@ -120,11 +127,10 @@ function fillForm(settings) {
  */
 function readForm() {
   const numbers = {};
-  for (const key of ["concurrency", "fragments"]) {
+  for (const [key, name] of Object.entries(NUMBER_FIELDS)) {
     const value = Number(field(key).value);
     const {min, max} = constants.LIMITS[key];
     if (!Number.isInteger(value) || value < min || value > max) {
-      const name = key === "concurrency" ? "Parallel downloads" : "Download speed-up";
       return {error: `${name} must be a whole number from ${min} to ${max}.`};
     }
     numbers[key] = value;

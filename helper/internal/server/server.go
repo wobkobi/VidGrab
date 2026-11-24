@@ -37,10 +37,10 @@ const (
 	// ExpandTimeout bounds listing a playlist or channel when queueing it, which can take far
 	// longer than the panel's /info call for a large channel.
 	ExpandTimeout = 120 * time.Second
-	// InfoListMax is how many entries /info lists for a playlist or channel; a longer list
-	// reports a null entry_count. Listing 201 entries of a 5000-video channel took about 5s,
-	// well inside core.InfoTimeout, while a full listing of one runs for minutes.
-	InfoListMax = 200
+	// ListEntryTime is the extra time /info allows per playlist or channel entry it lists, on
+	// top of core.InfoTimeout. Listing 201 entries of a 5000-video channel took about 5s (25 ms
+	// each), so 40 ms leaves room for a slow connection; see listTimeout.
+	ListEntryTime = 40 * time.Millisecond
 	// SettingsFile is the settings file name inside the data directory.
 	SettingsFile = "settings.json"
 	// SetupError is the 503 message while yt-dlp and ffmpeg are still being installed.
@@ -176,9 +176,18 @@ func (s *settingsStore) update(changes core.SettingsUpdate) core.Settings {
 	return s.current
 }
 
+// cacheKey names an /info summary by the settings it was fetched under. The list limit is part
+// of it, so a listing still running when list_limit changes is cached under the old limit and
+// never answers for the new one.
 type cacheKey struct {
-	url     string
-	cookies bool
+	url       string
+	cookies   bool
+	listLimit int
+}
+
+// keyFor is the cache key for a canonical URL under the given settings.
+func keyFor(canonical string, settings core.Settings) cacheKey {
+	return cacheKey{canonical, settings.Cookies, settings.ListLimit}
 }
 
 type cacheEntry struct {
@@ -247,6 +256,8 @@ func New(cfg Config) *Server {
 		Concurrency:  current.Concurrency,
 		Fragments:    current.Fragments,
 		Cookies:      current.Cookies,
+		GroupLimit:   current.GroupLimit,
+		KeepFinished: current.KeepFinished,
 		DownloadsDir: cfg.DownloadsDir,
 		Ffmpeg:       s.cfg.Ffmpeg,
 		Tools:        s.coreTools,
@@ -333,11 +344,11 @@ func (s *Server) fetchWithTools(ctx context.Context, url string, flat bool, item
 }
 
 // cachedInfo returns the unexpired /info summary for a canonical URL under the current cookies
-// setting, without calling yt-dlp.
+// and list_limit settings, without calling yt-dlp.
 func (s *Server) cachedInfo(canonical string) (core.Info, bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	hit, ok := s.cache[cacheKey{canonical, s.settings.get().Cookies}]
+	hit, ok := s.cache[keyFor(canonical, s.settings.get())]
 	if !ok || time.Since(hit.at) >= InfoCacheTTL {
 		return core.Info{}, false
 	}
@@ -347,20 +358,22 @@ func (s *Server) cachedInfo(canonical string) (core.Info, bool) {
 // info returns the /info summary for a URL, from the 10-minute cache when possible. Errors are
 // the fetcher's (*core.YtDlpError or *core.YtDlpTimeout).
 //
-// A playlist or channel is listed only as far as entry InfoListMax+1. When that extra entry
-// comes back the list is longer than InfoListMax: the summary keeps the first InfoListMax
-// entries and a nil EntryCount (null to the add-on, which then shows no count), and a nil
-// EntryCount is what keeps job creation from treating the cached listing as complete.
+// A playlist or channel is listed only as far as entry limit+1, limit being the list_limit
+// setting. When that extra entry comes back the list is longer than limit: the summary keeps
+// the first limit entries and a nil EntryCount (null to the add-on, which then shows no
+// count), and a nil EntryCount is what keeps job creation from treating the cached listing as
+// complete. The cache key holds the limit, so a cached summary always matches the current one.
 func (s *Server) info(ctx context.Context, parsed core.ParsedUrl) (core.Info, error) {
 	if summary, ok := s.cachedInfo(parsed.Canonical); ok {
 		return summary, nil
 	}
-	cookies := s.settings.get().Cookies
-	key := cacheKey{parsed.Canonical, cookies}
+	settings := s.settings.get()
+	cookies, limit := settings.Cookies, settings.ListLimit
+	key := keyFor(parsed.Canonical, settings)
 	list := parsed.Kind != core.KindVideo
 	items := ""
 	if list {
-		items = core.FormatItems([]core.ItemRange{{Start: 1, End: InfoListMax + 1}})
+		items = core.FormatItems([]core.ItemRange{{Start: 1, End: limit + 1}})
 	}
 	raw, err := s.cfg.FetchInfo(ctx, parsed.Canonical, list, items, cookies)
 	if err != nil {
@@ -368,9 +381,9 @@ func (s *Server) info(ctx context.Context, parsed core.ParsedUrl) (core.Info, er
 	}
 	summary := core.SummariseInfo(raw, parsed.Kind)
 	// Count the raw entries: the summary drops malformed ones, which still took a place
-	if entries, _ := raw["entries"].([]any); list && len(entries) > InfoListMax {
+	if entries, _ := raw["entries"].([]any); list && len(entries) > limit {
 		summary.EntryCount = nil
-		summary.Entries = summary.Entries[:min(len(summary.Entries), InfoListMax)]
+		summary.Entries = summary.Entries[:min(len(summary.Entries), limit)]
 	}
 	now := time.Now()
 	s.cacheMu.Lock()
@@ -418,7 +431,7 @@ func (s *Server) evictLocked(now time.Time) {
 func (s *Server) cachedTitle(canonical string) string {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	hit, ok := s.cache[cacheKey{canonical, s.settings.get().Cookies}]
+	hit, ok := s.cache[keyFor(canonical, s.settings.get())]
 	if !ok {
 		return ""
 	}
@@ -789,7 +802,11 @@ func (s *Server) handleInfo(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), core.InfoTimeout)
+	timeout := core.InfoTimeout
+	if parsed.Kind != core.KindVideo {
+		timeout = listTimeout(s.settings.get().ListLimit)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	summary, err := s.info(ctx, parsed)
 	if err != nil {
@@ -831,9 +848,9 @@ func (s *Server) handleCreateJobs(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	resp := map[string]any{"jobs": jobs}
-	// Only the first MaxGroupItems of a bigger selection were queued; the panel says so
+	// Only the first group_limit videos of a bigger selection were queued; the panel says so
 	if next > 0 {
-		resp["capped"] = MaxGroupItems
+		resp["capped"] = len(jobs)
 		resp["next"] = next
 	}
 	return http.StatusAccepted, resp, nil
@@ -905,7 +922,7 @@ func (s *Server) handlePutSettings(r *http.Request) (int, any, error) {
 		return 0, nil, decodeError(err)
 	}
 	settings := s.settings.update(changes)
-	s.queue.ApplySettings(settings.Concurrency, settings.Fragments, settings.Cookies)
+	s.queue.ApplySettings(settings)
 	return http.StatusOK, settings, nil
 }
 
@@ -1118,4 +1135,10 @@ func autoUpdate(ctx context.Context, tools ToolsState, updater *system.Updater, 
 		}
 	}
 	updater.AutoUpdate(ctx, enabled)
+}
+
+// listTimeout bounds an /info call for a playlist or channel under the given list_limit,
+// however long the list really is.
+func listTimeout(limit int) time.Duration {
+	return core.InfoTimeout + time.Duration(limit)*ListEntryTime
 }

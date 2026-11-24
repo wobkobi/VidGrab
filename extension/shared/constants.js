@@ -19,6 +19,12 @@ YTDL.constants = (function () {
     }),
     concurrency: 2,
     fragments: 4,
+    // Videos the options panel lists for a playlist or channel; more takes longer to open
+    list_limit: 200,
+    // Most videos one playlist or channel download queues; "All" on a bigger one stops here
+    group_limit: 1000,
+    // Finished downloads the popup keeps before the oldest successful ones are forgotten
+    keep_finished: 500,
     cookies: false,
     auto_update: true,
     notifications: true,
@@ -114,7 +120,15 @@ YTDL.constants = (function () {
     cancelled: "Cancelled",
   };
 
-  const LIMITS = {concurrency: {min: 1, max: 5}, fragments: {min: 1, max: 8}, max_size_mb: {min: 1, max: 4000}};
+  // Match the helper's bounds in core/models.go
+  const LIMITS = {
+    concurrency: {min: 1, max: 5},
+    fragments: {min: 1, max: 8},
+    list_limit: {min: 50, max: 5000},
+    group_limit: {min: 1, max: 2000},
+    keep_finished: {min: 50, max: 2000},
+    max_size_mb: {min: 1, max: 4000},
+  };
 
   // Download page for the native helper: the latest GitHub release carries every platform's
   // build next to the signed add-on. Empty would show the instruction as plain text instead.
@@ -296,6 +310,9 @@ YTDL.constants = (function () {
       },
       concurrency: clampInt(src.concurrency, LIMITS.concurrency, d.concurrency),
       fragments: clampInt(src.fragments, LIMITS.fragments, d.fragments),
+      list_limit: clampInt(src.list_limit, LIMITS.list_limit, d.list_limit),
+      group_limit: clampInt(src.group_limit, LIMITS.group_limit, d.group_limit),
+      keep_finished: clampInt(src.keep_finished, LIMITS.keep_finished, d.keep_finished),
       cookies: bool(src.cookies, d.cookies),
       auto_update: bool(src.auto_update, d.auto_update),
       notifications: bool(src.notifications, d.notifications),

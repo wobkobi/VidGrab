@@ -37,13 +37,15 @@ const (
 	StatusCancelled   = "cancelled"
 )
 
-// MaxGroupItems caps how many child jobs one playlist or channel may queue.
-const MaxGroupItems = 1000
+// DefaultGroupLimit caps how many child jobs one playlist or channel may queue until the
+// group_limit setting says otherwise.
+var DefaultGroupLimit = core.DefaultSettings().GroupLimit
 
-// MaxFinishedJobs caps how many complete jobs the queue remembers; the oldest successful
-// downloads are forgotten first and their files are untouched. Failed and cancelled jobs stay
-// until cleared, and with active jobs never count; see pruneFinishedLocked.
-const MaxFinishedJobs = 500
+// DefaultKeepFinished caps how many complete jobs the queue remembers until the keep_finished
+// setting says otherwise; the oldest successful downloads are forgotten first and their files
+// are untouched. Failed and cancelled jobs stay until cleared, and with active jobs never
+// count; see pruneFinishedLocked.
+var DefaultKeepFinished = core.DefaultSettings().KeepFinished
 
 // MaxRememberedJobs caps every job the queue remembers. Past it, the oldest finished downloads
 // are forgotten even when failed or cancelled; active ones never are.
@@ -265,6 +267,11 @@ type QueueConfig struct {
 	Fragments int
 	// Cookies makes jobs started from now on use Firefox cookies.
 	Cookies bool
+	// GroupLimit caps the videos one playlist or channel download queues (0 for
+	// DefaultGroupLimit); KeepFinished is how many complete jobs are remembered (0 for
+	// DefaultKeepFinished).
+	GroupLimit   int
+	KeepFinished int
 	// DownloadsDir returns the folder downloads land in (playlists get a subfolder).
 	DownloadsDir func() string
 	// Ffmpeg reports whether ffmpeg is available when a job starts.
@@ -306,11 +313,14 @@ type JobQueue struct {
 	concurrency int
 	fragments   int
 	cookies     bool
-	jobs        map[string]*job
-	order       []string // job ids, oldest first
-	closed      bool
-	holds       int
-	runners     int // runner goroutines still alive
+	// groupLimit and keepFinished follow the group_limit and keep_finished settings
+	groupLimit   int
+	keepFinished int
+	jobs         map[string]*job
+	order        []string // job ids, oldest first
+	closed       bool
+	holds        int
+	runners      int // runner goroutines still alive
 
 	downloadsDir func() string
 	ffmpeg       func() bool
@@ -334,6 +344,8 @@ func NewJobQueue(cfg QueueConfig) *JobQueue {
 		concurrency:  cfg.Concurrency,
 		fragments:    cfg.Fragments,
 		cookies:      cfg.Cookies,
+		groupLimit:   cfg.GroupLimit,
+		keepFinished: cfg.KeepFinished,
 		jobs:         map[string]*job{},
 		downloadsDir: cfg.DownloadsDir,
 		ffmpeg:       cfg.Ffmpeg,
@@ -347,6 +359,12 @@ func NewJobQueue(cfg QueueConfig) *JobQueue {
 
 		failedEncoders: map[string]bool{},
 		rename:         os.Rename,
+	}
+	if q.groupLimit <= 0 {
+		q.groupLimit = DefaultGroupLimit
+	}
+	if q.keepFinished <= 0 {
+		q.keepFinished = DefaultKeepFinished
 	}
 	if q.encoder == nil {
 		q.encoder = defaultEncoders.Pick
@@ -440,8 +458,8 @@ func (q *JobQueue) Create(rawURL string, options core.JobOptions, ranges []core.
 }
 
 // CreateCapped is Create that also reports, when a playlist or channel selection had more
-// than MaxGroupItems videos and only the first MaxGroupItems were queued, the list position
-// the rest starts at (0 when nothing was left out).
+// than the group limit and only that many were queued, the list position the rest starts at
+// (0 when nothing was left out). The number queued is then the limit that applied.
 func (q *JobQueue) CreateCapped(rawURL string, options core.JobOptions, ranges []core.ItemRange) ([]JobView, int, error) {
 	parsed, err := core.Classify(rawURL)
 	if err != nil {
@@ -457,16 +475,19 @@ func (q *JobQueue) CreateCapped(rawURL string, options core.JobOptions, ranges [
 		}
 		jobs = []*job{newJob(parsed.Canonical, parsed.ID, options, root, title, "", "")}
 	} else {
+		q.mu.Lock()
+		limit := q.groupLimit
+		q.mu.Unlock()
 		if q.fetchInfo == nil {
 			return nil, 0, &JobError{Status: 500, Message: "Playlist downloads are not available"}
 		}
 		// One position past the cap is enough to tell a selection is too big, so a huge
 		// channel is never listed in full
-		info, err := q.fetchInfo(parsed.Canonical, core.LimitItems(ranges, MaxGroupItems+1))
+		info, err := q.fetchInfo(parsed.Canonical, core.LimitItems(ranges, limit+1))
 		if err != nil {
 			return nil, 0, err
 		}
-		jobs, next, err = expandEntries(info, parsed, options, ranges, root)
+		jobs, next, err = expandEntries(info, parsed, options, ranges, root, limit)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -486,13 +507,13 @@ func (q *JobQueue) CreateCapped(rawURL string, options core.JobOptions, ranges [
 }
 
 // expandEntries turns flat playlist/channel JSON into one job per selected, well-formed entry,
-// all sharing a group id and a subfolder named after the list. A selection over MaxGroupItems
-// keeps its first MaxGroupItems entries and returns the position of the next one.
+// all sharing a group id and a subfolder named after the list. A selection over limit keeps
+// its first limit entries and returns the position of the next one.
 //
 // An entry's position is its place in the whole list. A listing limited by --playlist-items
 // names each entry's position in "requested_entries"; a full listing has none, and its
 // well-formed entries are numbered 1, 2, 3... in order.
-func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobOptions, ranges []core.ItemRange, root string) (jobs []*job, next int, err error) {
+func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobOptions, ranges []core.ItemRange, root string, limit int) (jobs []*job, next int, err error) {
 	type entry struct {
 		id, title, channel string
 		pos                int
@@ -530,10 +551,10 @@ func expandEntries(info map[string]any, parsed core.ParsedUrl, options core.JobO
 		return nil, 0, &JobError{Status: 400, Message: "No videos in that range"}
 	}
 	// Entries are in list order, so this keeps the lowest positions (a channel's newest videos)
-	if len(selected) > MaxGroupItems {
+	if len(selected) > limit {
 		// The rest starts at the first left-out entry, wherever the selection began
-		next = selected[MaxGroupItems].pos
-		selected = selected[:MaxGroupItems]
+		next = selected[limit].pos
+		selected = selected[:limit]
 	}
 	groupTitle, _ := info["title"].(string)
 	if groupTitle == "" {
@@ -803,7 +824,7 @@ func (q *JobQueue) ClearFinished(failed bool) int {
 	return q.forgetLocked(clear)
 }
 
-// pruneFinishedLocked forgets the oldest successful downloads while more than MaxFinishedJobs
+// pruneFinishedLocked forgets the oldest successful downloads while more than q.keepFinished
 // complete jobs are remembered. Only a download whose jobs all completed goes, and only in
 // full. One with a failed or cancelled job doesn't count and stays until the user clears or
 // retries it, so a cancelled 1000-video channel can't push other downloads out or vanish
@@ -822,7 +843,7 @@ func (q *JobQueue) pruneFinishedLocked() {
 	total := len(q.order)
 	var prune []*download
 	for _, d := range list[:max(len(list)-1, 0)] {
-		if complete <= MaxFinishedJobs && total <= MaxRememberedJobs {
+		if complete <= q.keepFinished && total <= MaxRememberedJobs {
 			break
 		}
 		if d.complete || (d.finished && total > MaxRememberedJobs) {
@@ -836,14 +857,22 @@ func (q *JobQueue) pruneFinishedLocked() {
 	q.forgetLocked(prune)
 }
 
-// ApplySettings updates the queue settings; a higher concurrency starts waiting jobs straight
-// away, while fragments and cookies apply to jobs started from now on.
-func (q *JobQueue) ApplySettings(concurrency, fragments int, cookies bool) {
+// ApplySettings updates the queue settings. A higher concurrency starts waiting jobs straight
+// away and a lower keep_finished forgets the extra complete downloads now; fragments, cookies
+// and the group limit apply to jobs started or queued from now on.
+func (q *JobQueue) ApplySettings(s core.Settings) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.concurrency = concurrency
-	q.fragments = fragments
-	q.cookies = cookies
+	q.concurrency = s.Concurrency
+	q.fragments = s.Fragments
+	q.cookies = s.Cookies
+	if s.GroupLimit > 0 {
+		q.groupLimit = s.GroupLimit
+	}
+	if s.KeepFinished > 0 {
+		q.keepFinished = s.KeepFinished
+	}
+	q.pruneFinishedLocked()
 	q.scheduleLocked()
 }
 

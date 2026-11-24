@@ -287,7 +287,7 @@ func TestRaisingConcurrencyStartsWaitingJobs(t *testing.T) {
 		create(t, q, watchURL(v), defaults())
 	}
 	waitFor(t, func() bool { return starter.count() == 1 })
-	q.ApplySettings(3, 8, true)
+	q.ApplySettings(core.Settings{Concurrency: 3, Fragments: 8, Cookies: true})
 	waitFor(t, func() bool { return starter.count() == 3 })
 	third := starter.proc(2)
 	if !slices.Contains(third.args, "--cookies-from-browser") {
@@ -736,7 +736,7 @@ func TestPruneFinishedKeepsNewestAndActive(t *testing.T) {
 	}
 	add("queued", StatusQueued, false)
 	add("exiting", StatusCancelled, true)
-	for i := 0; i < MaxFinishedJobs+3; i++ {
+	for i := 0; i < DefaultKeepFinished+3; i++ {
 		add(fmt.Sprintf("done-%d", i), StatusComplete, false)
 	}
 	q.pruneFinishedLocked()
@@ -748,7 +748,7 @@ func TestPruneFinishedKeepsNewestAndActive(t *testing.T) {
 			t.Errorf("%s should be pruned", gone)
 		}
 	}
-	for _, kept := range []string{"queued", "exiting", "done-3", fmt.Sprintf("done-%d", MaxFinishedJobs+2)} {
+	for _, kept := range []string{"queued", "exiting", "done-3", fmt.Sprintf("done-%d", DefaultKeepFinished+2)} {
 		if _, ok := q.jobs[kept]; !ok {
 			t.Errorf("%s should be kept", kept)
 		}
@@ -771,12 +771,12 @@ func TestPruneFinishedKeepsWholeGroups(t *testing.T) {
 	}
 	add("busy-0", "busy", StatusComplete)
 	add("busy-1", "busy", StatusQueued)
-	for i := 0; i < MaxGroupItems; i++ {
+	for i := 0; i < DefaultGroupLimit; i++ {
 		add(fmt.Sprintf("big-%d", i), "big", StatusCancelled)
 	}
 	add("mixed-0", "mixed", StatusComplete)
 	add("mixed-1", "mixed", StatusError)
-	for i := 0; i < MaxFinishedJobs; i++ {
+	for i := 0; i < DefaultKeepFinished; i++ {
 		add(fmt.Sprintf("one-%d", i), "", StatusComplete)
 	}
 	q.pruneFinishedLocked()
@@ -789,12 +789,12 @@ func TestPruneFinishedKeepsWholeGroups(t *testing.T) {
 			t.Errorf("%s should be pruned", gone)
 		}
 	}
-	for _, kept := range []string{"busy-0", "busy-1", "big-0", fmt.Sprintf("big-%d", MaxGroupItems-1), "mixed-0", "mixed-1", "one-0"} {
+	for _, kept := range []string{"busy-0", "busy-1", "big-0", fmt.Sprintf("big-%d", DefaultGroupLimit-1), "mixed-0", "mixed-1", "one-0"} {
 		if _, ok := q.jobs[kept]; !ok {
 			t.Errorf("%s should be kept", kept)
 		}
 	}
-	if want := 2 + MaxGroupItems + 2 + MaxFinishedJobs; len(q.jobs) != want {
+	if want := 2 + DefaultGroupLimit + 2 + DefaultKeepFinished; len(q.jobs) != want {
 		t.Errorf("%d jobs kept, want %d", len(q.jobs), want)
 	}
 
@@ -817,13 +817,13 @@ func TestPruneHardCapForgetsOldFailures(t *testing.T) {
 	}
 	// Six cancelled 1000-video groups, oldest first, plus one queued video: 6001 jobs
 	for g := 0; g < 6; g++ {
-		for i := 0; i < MaxGroupItems; i++ {
+		for i := 0; i < DefaultGroupLimit; i++ {
 			add(fmt.Sprintf("g%d-%d", g, i), fmt.Sprint("g", g), StatusCancelled)
 		}
 	}
 	add("waiting", "", StatusQueued)
 	q.pruneFinishedLocked()
-	if len(q.order) != len(q.jobs) || len(q.jobs) != 4*MaxGroupItems+1 {
+	if len(q.order) != len(q.jobs) || len(q.jobs) != 4*DefaultGroupLimit+1 {
 		t.Fatalf("order %d, jobs %d", len(q.order), len(q.jobs))
 	}
 	for _, gone := range []string{"g0-0", "g1-999"} {
@@ -994,7 +994,7 @@ func TestPlaylistEmptyRangeAndCap(t *testing.T) {
 	}
 	q = makeQueue(t, dir, newBlockingStarter(), func(c *QueueConfig) { c.FetchInfo = many })
 	jobs, next, err := q.CreateCapped("https://www.youtube.com/@jawed", defaults(), nil)
-	if err != nil || next != MaxGroupItems+1 || len(jobs) != MaxGroupItems || str(jobs[MaxGroupItems-1].Title) != "999" {
+	if err != nil || next != DefaultGroupLimit+1 || len(jobs) != DefaultGroupLimit || str(jobs[DefaultGroupLimit-1].Title) != "999" {
 		t.Fatalf("got %d jobs, next %d, %v", len(jobs), next, err)
 	}
 }
@@ -1046,7 +1046,7 @@ func TestPlaylistListsOnlyTheItemsInRange(t *testing.T) {
 	asked = nil
 	for _, r := range [][]core.ItemRange{nil, {{Start: 1, End: 100000}}} {
 		capJobs, next, err := q.CreateCapped(channel, defaults(), r)
-		if err != nil || next != 1001 || len(capJobs) != MaxGroupItems || str(capJobs[0].Title) != "1" || str(capJobs[MaxGroupItems-1].Title) != "1000" {
+		if err != nil || next != 1001 || len(capJobs) != DefaultGroupLimit || str(capJobs[0].Title) != "1" || str(capJobs[DefaultGroupLimit-1].Title) != "1000" {
 			t.Fatalf("ranges %v: %d jobs, next %d, %v", r, len(capJobs), next, err)
 		}
 	}
@@ -1056,7 +1056,7 @@ func TestPlaylistListsOnlyTheItemsInRange(t *testing.T) {
 
 	// A selection starting part-way names the real next position, not 1001
 	capJobs, next, err := q.CreateCapped(channel, defaults(), []core.ItemRange{{Start: 500, End: 2000}})
-	if err != nil || next != 1500 || len(capJobs) != MaxGroupItems || str(capJobs[MaxGroupItems-1].Title) != "1499" {
+	if err != nil || next != 1500 || len(capJobs) != DefaultGroupLimit || str(capJobs[DefaultGroupLimit-1].Title) != "1499" {
 		t.Fatalf("500-2000: %d jobs, next %d, %v", len(capJobs), next, err)
 	}
 
@@ -1065,7 +1065,7 @@ func TestPlaylistListsOnlyTheItemsInRange(t *testing.T) {
 	if !errors.As(err, &jobErr) || jobErr.Message != "No videos in that range" {
 		t.Fatalf("past the end: %v", err)
 	}
-	if len(q.List()) != len(want)+3*MaxGroupItems {
+	if len(q.List()) != len(want)+3*DefaultGroupLimit {
 		t.Fatalf("%d jobs queued", len(q.List()))
 	}
 }
